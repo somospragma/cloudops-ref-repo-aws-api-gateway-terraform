@@ -340,3 +340,155 @@ locals {
     )
   }
 }
+
+
+  # Generar OpenAPI spec para MODO SIMPLE
+  openapi_simple_raw = {
+    for key, api in local.api_resources : key => {
+      openapi = "3.0.1"
+      info = {
+        title   = api.name
+        version = "1.0"
+      }
+      paths = {
+        "/" = merge(
+          api.cors_enabled ? { options = local.cors_options_method[key] } : {},
+          {
+            "x-amazon-apigateway-any-method" = merge(
+              {
+                responses = { "200" = { description = "Success" } }
+                "x-amazon-apigateway-integration" = (
+                  api.simple_integration_type == "LAMBDA" ? local.lambda_integration_simple[key] :
+                  api.simple_integration_type == "VPC_LINK" ? local.vpc_link_integration_simple[key] :
+                  {}
+                )
+              },
+              length(local.security_requirement[key]) > 0 ? { security = local.security_requirement[key] } : {}
+            )
+          }
+        )
+        "/{proxy+}" = merge(
+          api.cors_enabled ? { options = local.cors_options_proxy[key] } : {},
+          {
+            "x-amazon-apigateway-any-method" = merge(
+              {
+                parameters = [{ name = "proxy", in = "path", required = true, schema = { type = "string" } }]
+                responses  = { "200" = { description = "Success" } }
+                "x-amazon-apigateway-integration" = (
+                  api.simple_integration_type == "LAMBDA" ? local.lambda_integration_simple[key] :
+                  api.simple_integration_type == "VPC_LINK" ? local.vpc_link_integration_proxy[key] :
+                  {}
+                )
+              },
+              length(local.security_requirement[key]) > 0 ? { security = local.security_requirement[key] } : {}
+            )
+          }
+        )
+      }
+    } if api.mode == "SIMPLE"
+  }
+
+  # Añadir components si hay auth
+  openapi_simple = {
+    for key, spec in local.openapi_simple_raw : key => merge(
+      spec,
+      local.security_schemes_json[key] != "{}" ? {
+        components = {
+          securitySchemes = jsondecode(local.security_schemes_json[key])
+        }
+      } : {}
+    )
+  }
+
+  # Helper para obtener security requirement de una ruta
+  route_security = {
+    for key, api in local.api_resources : key => {
+      for route_path, route in api.routes : route_path => (
+        route.auth != null && route.auth.type != null && route.auth.type != "" ? (
+          route.auth.type == "NONE" ? [] :
+          route.auth.type == "API_KEY" ? [{ api_key = [] }] :
+          route.auth.type == "IAM" ? [{ sigv4 = [] }] :
+          route.auth.type == "COGNITO" ? [{ cognito = [] }] :
+          [{ lambda_auth = [] }]
+        ) : local.security_requirement[key]
+      )
+    } if api.mode == "ROUTES"
+  }
+
+  # Generar OpenAPI spec para MODO RUTAS
+  openapi_routes_raw = {
+    for key, api in local.api_resources : key => {
+      openapi = "3.0.1"
+      info = {
+        title   = api.name
+        version = "1.0"
+      }
+      paths = {
+        for route_path, route in api.routes : route_path => merge(
+          # CORS OPTIONS
+          api.cors_enabled ? { options = local.cors_options_method[key] } : {},
+          # Métodos de la ruta
+          {
+            for method in route.methods : (lower(method) == "any" ? "x-amazon-apigateway-any-method" : lower(method)) => merge(
+              {
+                responses = { "200" = { description = "Success" } }
+                "x-amazon-apigateway-integration" = (
+                  route.type == "LAMBDA" ? {
+                    httpMethod          = "POST"
+                    type                = "aws_proxy"
+                    uri                 = "arn:aws:apigateway:${data.aws_region.current.id}:lambda:path/2015-03-31/functions/${route.lambda_arn}/invocations"
+                    passthroughBehavior = "when_no_match"
+                    timeoutInMillis     = 29000
+                  } : route.type == "VPC_LINK" ? {
+                    httpMethod          = "ANY"
+                    type                = "http_proxy"
+                    uri                 = route.backend_url
+                    connectionType      = "VPC_LINK"
+                    connectionId        = route.vpc_link_id
+                    passthroughBehavior = "when_no_match"
+                    timeoutInMillis     = 29000
+                  } : route.type == "MOCK" ? {
+                    type             = "mock"
+                    requestTemplates = { "application/json" = "{\"statusCode\": ${route.mock_response != null ? route.mock_response.status_code : 200}}" }
+                    responses = {
+                      default = {
+                        statusCode        = tostring(route.mock_response != null ? route.mock_response.status_code : 200)
+                        responseTemplates = { "application/json" = route.mock_response != null ? route.mock_response.body : "{\"status\":\"ok\"}" }
+                      }
+                    }
+                  } : route.type == "HTTP" ? {
+                    httpMethod          = "ANY"
+                    type                = "http_proxy"
+                    uri                 = route.http_url
+                    passthroughBehavior = "when_no_match"
+                    timeoutInMillis     = 29000
+                  } : {}
+                )
+              },
+              length(local.route_security[key][route_path]) > 0 ? { security = local.route_security[key][route_path] } : {}
+            )
+          }
+        )
+      }
+    } if api.mode == "ROUTES"
+  }
+
+  # Añadir components si hay auth para ROUTES
+  openapi_routes = {
+    for key, spec in local.openapi_routes_raw : key => merge(
+      spec,
+      local.security_schemes_json[key] != "{}" ? {
+        components = {
+          securitySchemes = jsondecode(local.security_schemes_json[key])
+        }
+      } : {}
+    )
+  }
+
+  # Combinar specs - usar jsonencode al final
+  openapi_specs = {
+    for key, api in local.api_resources : key => jsonencode(
+      api.mode == "SIMPLE" ? local.openapi_simple[key] : local.openapi_routes[key]
+    )
+  }
+}
