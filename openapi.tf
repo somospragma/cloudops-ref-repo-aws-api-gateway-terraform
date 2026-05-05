@@ -13,6 +13,62 @@ locals {
     }
   }
 
+  # Security schemes por tipo de auth para MODO SIMPLE
+  security_schemes_simple = {
+    for key, api in local.api_resources : key => (
+      api.auth_type == "API_KEY" ? {
+        api_key = {
+          type = "apiKey"
+          name = "x-api-key"
+          in   = "header"
+        }
+      } : api.auth_type == "IAM" ? {
+        sigv4 = {
+          type                           = "apiKey"
+          name                           = "Authorization"
+          in                             = "header"
+          "x-amazon-apigateway-authtype" = "awsSigv4"
+        }
+      } : api.auth_type == "COGNITO" ? {
+        cognito = {
+          type                           = "apiKey"
+          name                           = "Authorization"
+          in                             = "header"
+          "x-amazon-apigateway-authtype" = "cognito_user_pools"
+          "x-amazon-apigateway-authorizer" = {
+            type         = "cognito_user_pools"
+            providerARNs = api.auth_cognito_arns
+          }
+        }
+      } : api.auth_type == "LAMBDA_TOKEN" ? {
+        lambda_auth = {
+          type                           = "apiKey"
+          name                           = "Authorization"
+          in                             = "header"
+          "x-amazon-apigateway-authtype" = "custom"
+          "x-amazon-apigateway-authorizer" = {
+            type                         = "token"
+            authorizerUri                = api.auth_authorizer_uri
+            authorizerResultTtlInSeconds = api.auth_authorizer_ttl
+          }
+        }
+      } : api.auth_type == "LAMBDA_REQUEST" ? {
+        lambda_auth = {
+          type                           = "apiKey"
+          name                           = "Unused"
+          in                             = "header"
+          "x-amazon-apigateway-authtype" = "custom"
+          "x-amazon-apigateway-authorizer" = {
+            type                         = "request"
+            authorizerUri                = api.auth_authorizer_uri
+            authorizerResultTtlInSeconds = api.auth_authorizer_ttl
+            identitySource               = api.auth_identity_source
+          }
+        }
+      } : null
+    )
+  }
+
   # Generar OpenAPI spec para MODO SIMPLE
   openapi_simple = {
     for key, api in local.api_resources : key => {
@@ -21,59 +77,8 @@ locals {
         title   = api.name
         version = "1.0"
       }
-      components = api.auth_type != "NONE" ? {
-        securitySchemes = (
-          api.auth_type == "API_KEY" ? {
-            api_key = {
-              type = "apiKey"
-              name = "x-api-key"
-              in   = "header"
-            }
-            } : api.auth_type == "IAM" ? {
-            sigv4 = {
-              type                           = "apiKey"
-              name                           = "Authorization"
-              in                             = "header"
-              "x-amazon-apigateway-authtype" = "awsSigv4"
-            }
-            } : api.auth_type == "COGNITO" ? {
-            cognito = {
-              type                           = "apiKey"
-              name                           = "Authorization"
-              in                             = "header"
-              "x-amazon-apigateway-authtype" = "cognito_user_pools"
-              "x-amazon-apigateway-authorizer" = {
-                type         = "cognito_user_pools"
-                providerARNs = api.auth_cognito_arns
-              }
-            }
-            } : api.auth_type == "LAMBDA_TOKEN" ? {
-            lambda_auth = {
-              type                           = "apiKey"
-              name                           = "Authorization"
-              in                             = "header"
-              "x-amazon-apigateway-authtype" = "custom"
-              "x-amazon-apigateway-authorizer" = {
-                type                         = "token"
-                authorizerUri                = api.auth_authorizer_uri
-                authorizerResultTtlInSeconds = api.auth_authorizer_ttl
-              }
-            }
-            } : api.auth_type == "LAMBDA_REQUEST" ? {
-            lambda_auth = {
-              type                           = "apiKey"
-              name                           = "Unused"
-              in                             = "header"
-              "x-amazon-apigateway-authtype" = "custom"
-              "x-amazon-apigateway-authorizer" = {
-                type                         = "request"
-                authorizerUri                = api.auth_authorizer_uri
-                authorizerResultTtlInSeconds = api.auth_authorizer_ttl
-                identitySource               = api.auth_identity_source
-              }
-            }
-          } : {}
-        )
+      components = api.auth_type != "NONE" && local.security_schemes_simple[key] != null ? {
+        securitySchemes = local.security_schemes_simple[key]
       } : {}
       paths = {
         "/" = merge(
@@ -197,6 +202,38 @@ locals {
     } if api.mode == "SIMPLE"
   }
 
+  # Security schemes por tipo de auth para MODO RUTAS
+  security_schemes_routes = {
+    for key, api in local.api_resources : key => (
+      api.auth_type == "API_KEY" ? {
+        api_key = { type = "apiKey", name = "x-api-key", in = "header" }
+      } : api.auth_type == "IAM" ? {
+        sigv4 = { type = "apiKey", name = "Authorization", in = "header", "x-amazon-apigateway-authtype" = "awsSigv4" }
+      } : api.auth_type == "COGNITO" ? {
+        cognito = {
+          type                             = "apiKey"
+          name                             = "Authorization"
+          in                               = "header"
+          "x-amazon-apigateway-authtype"   = "cognito_user_pools"
+          "x-amazon-apigateway-authorizer" = { type = "cognito_user_pools", providerARNs = api.auth_cognito_arns }
+        }
+      } : contains(["LAMBDA_TOKEN", "LAMBDA_REQUEST"], api.auth_type) ? {
+        lambda_auth = {
+          type                           = "apiKey"
+          name                           = api.auth_type == "LAMBDA_TOKEN" ? "Authorization" : "Unused"
+          in                             = "header"
+          "x-amazon-apigateway-authtype" = "custom"
+          "x-amazon-apigateway-authorizer" = {
+            type                         = api.auth_type == "LAMBDA_TOKEN" ? "token" : "request"
+            authorizerUri                = api.auth_authorizer_uri
+            authorizerResultTtlInSeconds = api.auth_authorizer_ttl
+            identitySource               = api.auth_type == "LAMBDA_REQUEST" ? api.auth_identity_source : null
+          }
+        }
+      } : null
+    )
+  }
+
   # Generar OpenAPI spec para MODO RUTAS
   openapi_routes = {
     for key, api in local.api_resources : key => {
@@ -205,35 +242,8 @@ locals {
         title   = api.name
         version = "1.0"
       }
-      components = api.auth_type != "NONE" ? {
-        securitySchemes = (
-          api.auth_type == "API_KEY" ? {
-            api_key = { type = "apiKey", name = "x-api-key", in = "header" }
-            } : api.auth_type == "IAM" ? {
-            sigv4 = { type = "apiKey", name = "Authorization", in = "header", "x-amazon-apigateway-authtype" = "awsSigv4" }
-            } : api.auth_type == "COGNITO" ? {
-            cognito = {
-              type                             = "apiKey"
-              name                             = "Authorization"
-              in                               = "header"
-              "x-amazon-apigateway-authtype"   = "cognito_user_pools"
-              "x-amazon-apigateway-authorizer" = { type = "cognito_user_pools", providerARNs = api.auth_cognito_arns }
-            }
-            } : contains(["LAMBDA_TOKEN", "LAMBDA_REQUEST"], api.auth_type) ? {
-            lambda_auth = {
-              type                           = "apiKey"
-              name                           = api.auth_type == "LAMBDA_TOKEN" ? "Authorization" : "Unused"
-              in                             = "header"
-              "x-amazon-apigateway-authtype" = "custom"
-              "x-amazon-apigateway-authorizer" = {
-                type                         = api.auth_type == "LAMBDA_TOKEN" ? "token" : "request"
-                authorizerUri                = api.auth_authorizer_uri
-                authorizerResultTtlInSeconds = api.auth_authorizer_ttl
-                identitySource               = api.auth_type == "LAMBDA_REQUEST" ? api.auth_identity_source : null
-              }
-            }
-          } : {}
-        )
+      components = api.auth_type != "NONE" && local.security_schemes_routes[key] != null ? {
+        securitySchemes = local.security_schemes_routes[key]
       } : {}
       paths = {
         for route_path, route in api.routes : route_path => merge(
