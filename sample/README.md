@@ -1,62 +1,60 @@
-# Sample - API Gateway Module
+# Ejemplo de Uso del Módulo API Gateway
 
-Este directorio contiene un ejemplo completo de cómo consumir el módulo `cloudops-ref-repo-aws-api-terraform-v2`.
+Este ejemplo demuestra cómo usar el módulo de API Gateway con:
+- API Key + Cognito en el mismo endpoint
+- Múltiples rutas con diferentes configuraciones de autenticación
+- Usage Plans con throttling y quotas
 
-## Estructura
+## Requisitos Previos
 
-```
-sample/
-├── README.md           # Este archivo
-├── data.tf             # Data sources del consumidor
-├── locals.tf           # Transformación de variables a api_config
-├── main.tf             # Invocación del módulo
-├── outputs.tf          # Outputs del consumidor
-├── providers.tf        # Configuración de providers
-├── terraform.tfvars    # Valores de ejemplo
-└── variables.tf        # Variables del consumidor
-```
+1. Cognito User Pool existente
+2. Lambda Functions existentes (auth, sync, webhook)
+3. Rol IAM para despliegue
 
-## Patrón de Transformación (PC-IAC-026)
+## Configuración de Seguridad por Endpoint
 
-El consumidor define sus APIs en un formato simple y `locals.tf` las transforma al formato `api_config` que espera el módulo:
-
-```hcl
-# variables.tf - Formato simple del consumidor
-variable "apis" {
-  type = map(object({
-    lambda_key  = string
-    description = optional(string, "")
-  }))
-}
-
-# locals.tf - Transformación
-locals {
-  api_config = {
-    for key, api in var.apis : key => {
-      lambda_arn  = var.lambda_arns[api.lambda_key]
-      description = api.description
-    }
-  }
-}
-
-# main.tf - Invocación
-module "api" {
-  source     = "../"
-  api_config = local.api_config
-}
-```
+| Endpoint | API Key | Cognito | Descripción |
+|----------|---------|---------|-------------|
+| `/auth/login` | ✅ | ❌ | Login sin token Cognito |
+| `/auth/refresh` | ✅ | ❌ | Refresh sin token Cognito |
+| `/health` | ✅ | ❌ | Health check público |
+| `/webhook/github` | ✅ | ❌ | Webhook externo |
+| `/accounts` | ✅ | ✅ | Requiere ambos |
+| `/sync` | ✅ | ✅ | Requiere ambos |
+| `/taxonomy` | ✅ | ✅ | Requiere ambos |
+| `/config` | ✅ | ✅ | Requiere ambos |
 
 ## Uso
 
+1. Configurar las variables en `terraform.tfvars`
+2. Inicializar Terraform:
+   ```bash
+   terraform init
+   ```
+3. Planificar:
+   ```bash
+   terraform plan
+   ```
+4. Aplicar:
+   ```bash
+   terraform apply
+   ```
+
+## Outputs
+
+- `api_invoke_url`: URL base de la API
+- `api_key_value`: Valor de la API Key (sensible)
+- `authorizer_id`: ID del authorizer Cognito
+
+## Ejemplo de Llamada
+
 ```bash
-cd sample/
-terraform init
-terraform plan -var-file="terraform.tfvars"
-terraform apply -var-file="terraform.tfvars"
+# Endpoint solo con API Key
+curl -H "x-api-key: YOUR_API_KEY" \
+  https://xxx.execute-api.us-east-1.amazonaws.com/v1/health
+
+# Endpoint con API Key + Cognito
+curl -H "x-api-key: YOUR_API_KEY" \
+     -H "Authorization: Bearer YOUR_COGNITO_TOKEN" \
+  https://xxx.execute-api.us-east-1.amazonaws.com/v1/accounts
 ```
-
-## Requisitos
-
-- Terraform >= 1.0.0
-- AWS Provider >= 5.0.0
-- Lambda(s) ya desplegada(s) con sus ARNs disponibles

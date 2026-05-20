@@ -1,20 +1,35 @@
 ############################################################################
-# Variables de Gobernanza
+# Variables del Ejemplo (PC-IAC-002)
 ############################################################################
 
 variable "client" {
-  description = "Nombre del cliente o unidad de negocio"
+  description = "Nombre del cliente"
   type        = string
+
+  validation {
+    condition     = length(var.client) > 0
+    error_message = "El cliente es requerido."
+  }
 }
 
 variable "project" {
   description = "Nombre del proyecto"
   type        = string
+
+  validation {
+    condition     = length(var.project) > 0
+    error_message = "El proyecto es requerido."
+  }
 }
 
 variable "environment" {
   description = "Ambiente de despliegue"
   type        = string
+
+  validation {
+    condition     = contains(["dev", "qa", "stg", "pdn", "prod"], var.environment)
+    error_message = "El ambiente debe ser uno de: dev, qa, stg, pdn, prod."
+  }
 }
 
 variable "region" {
@@ -23,72 +38,35 @@ variable "region" {
   default     = "us-east-1"
 }
 
-############################################################################
-# Variables del Consumidor (Formato Simple)
-############################################################################
-
-variable "lambda_arns" {
-  description = "Mapa de ARNs de Lambdas disponibles para integrar"
-  type        = map(string)
-  default     = {}
+variable "deploy_role_arn" {
+  description = "ARN del rol para despliegue"
+  type        = string
 }
 
-variable "apis" {
-  description = <<-EOT
-    Mapa de APIs a crear. Soporta dos modos:
-    
-    MODO SIMPLE (una integración para toda la API):
-    - integration_type: LAMBDA o VPC_LINK
-    - lambda_key: Key del lambda_arns (si LAMBDA)
-    - backend_url + vpc_link_id: URL y VPC Link (si VPC_LINK)
-    
-    MODO RUTAS (múltiples integraciones):
-    - routes: Mapa de rutas con configuración individual
-    
-    Ambos modos soportan:
-    - stage_name: Nombre del stage
-    - cors: Configuración de CORS
-    - auth: Autenticación (NONE, API_KEY, IAM, COGNITO, LAMBDA_TOKEN, LAMBDA_REQUEST)
-  EOT
+variable "cognito_user_pool_name" {
+  description = "Nombre del Cognito User Pool"
+  type        = string
+}
 
-  type = map(object({
-    # Modo simple
-    integration_type = optional(string, "")
-    lambda_key       = optional(string, "")
-    backend_url      = optional(string, "")
-    vpc_link_id      = optional(string, "")
+variable "lambda_auth_name" {
+  description = "Nombre de la Lambda de autenticación"
+  type        = string
+}
 
-    # Modo rutas
-    routes = optional(map(object({
-      methods     = optional(list(string), ["ANY"])
-      type        = string
-      lambda_key  = optional(string, "")
-      backend_url = optional(string, "")
-      vpc_link_id = optional(string, "")
-      http_url    = optional(string, "")
-      mock_response = optional(object({
-        status_code = optional(number, 200)
-        body        = optional(string, "{\"status\":\"ok\"}")
-      }), null)
-      auth = optional(object({
-        type = optional(string, "")
-      }), null)
-    })), {})
+variable "lambda_sync_name" {
+  description = "Nombre de la Lambda de sincronización"
+  type        = string
+}
 
-    # Comunes
-    stage_name = optional(string, "v1")
-    cors = optional(object({
-      enabled         = optional(bool, false)
-      allowed_origins = optional(list(string), ["*"])
-      allowed_methods = optional(list(string), ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"])
-      allowed_headers = optional(list(string), ["Content-Type", "Authorization", "X-Api-Key"])
-    }), { enabled = false })
-    auth = optional(object({
-      type                   = optional(string, "NONE")
-      cognito_user_pool_arns = optional(list(string), [])
-      authorizer_uri         = optional(string, "")
-    }), { type = "NONE" })
-  }))
+variable "lambda_webhook_name" {
+  description = "Nombre de la Lambda de webhook"
+  type        = string
+}
 
-  default = {}
+variable "common_tags" {
+  description = "Tags comunes para todos los recursos"
+  type        = map(string)
+  default = {
+    ManagedBy = "Terraform"
+  }
 }

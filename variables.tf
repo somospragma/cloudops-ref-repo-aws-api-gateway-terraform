@@ -33,41 +33,33 @@ variable "environment" {
 }
 
 ############################################################################
-# Variable de Configuración Principal (PC-IAC-002, PC-IAC-009)
+# Variable de Configuración Principal - API Gateway (PC-IAC-002, PC-IAC-010)
 ############################################################################
 
 variable "api_config" {
   description = <<-EOT
-    Mapa de configuración de API Gateway REST APIs.
+    Mapa de configuración de API Gateway REST APIs (Terraform nativo, sin OpenAPI).
     Cada key representa una API única.
     
-    MODO SIMPLE (una integración para toda la API):
-    - integration_type: LAMBDA o VPC_LINK
-    - lambda_arn: ARN de Lambda (si LAMBDA)
-    - backend_url + vpc_link_id: URL y VPC Link (si VPC_LINK)
+    CARACTERÍSTICAS:
+    - Soporta combinación de API Key + Cognito en el mismo endpoint
+    - Usa recursos nativos de Terraform (no OpenAPI body)
+    - Permite configuración granular por ruta
     
-    MODO RUTAS (múltiples rutas con diferentes integraciones):
+    RUTAS:
     - routes: Mapa de rutas con configuración individual
+    - Cada ruta puede tener su propia configuración de auth
     
-    AUTENTICACIÓN (a nivel API, heredable por rutas):
-    - auth.type: NONE, API_KEY, IAM, COGNITO, LAMBDA_TOKEN, LAMBDA_REQUEST
-    - auth.cognito_user_pool_arns: ARNs de Cognito (si COGNITO)
-    - auth.authorizer_uri: URI de Lambda authorizer (si LAMBDA_*)
-    - auth.authorizer_credentials: Rol IAM para invocar authorizer
-    - auth.authorizer_result_ttl: TTL del cache del authorizer
-    - auth.identity_source: Fuente de identidad (header, query, etc)
-    - auth.identity_validation_expression: Regex para validar token
+    AUTENTICACIÓN POR RUTA:
+    - authorization: NONE, COGNITO_USER_POOLS, CUSTOM, AWS_IAM
+    - api_key_required: true/false (independiente del authorization)
+    - authorizer_id: ID del authorizer (si usa COGNITO o CUSTOM)
     
-    CORS:
-    - cors.enabled: Habilitar CORS
-    - cors.allowed_origins, allowed_methods, allowed_headers, max_age
+    AUTHORIZERS:
+    - authorizers: Mapa de authorizers (Cognito o Lambda)
     
-    CUSTOM DOMAIN:
-    - custom_domain_name, certificate_arn, base_path
-    
-    VPC LINK (crear nuevo):
-    - vpc_link.create: true para crear
-    - vpc_link.target_arn: ARN del NLB
+    API KEYS Y USAGE PLANS:
+    - api_keys: Mapa de API Keys con configuración de throttling/quota
   EOT
 
   type = map(object({
@@ -84,21 +76,26 @@ variable "api_config" {
     vpc_endpoint_ids             = optional(list(string), [])
     additional_tags              = optional(map(string), {})
 
-    # ========== MODO SIMPLE (una integración) ==========
-    integration_type = optional(string, "")
-    lambda_arn       = optional(string, "")
-    backend_url      = optional(string, "")
-    vpc_link_id      = optional(string, "")
-    vpc_link = optional(object({
-      create     = optional(bool, false)
-      name       = optional(string, "")
-      target_arn = optional(string, "")
-    }), { create = false })
+    # ========== AUTHORIZERS ==========
+    authorizers = optional(map(object({
+      type                             = string # COGNITO_USER_POOLS, TOKEN, REQUEST
+      provider_arns                    = optional(list(string), [])
+      authorizer_uri                   = optional(string, "")
+      authorizer_credentials           = optional(string, "")
+      authorizer_result_ttl_in_seconds = optional(number, 300)
+      identity_source                  = optional(string, "method.request.header.Authorization")
+      identity_validation_expression   = optional(string, "")
+    })), {})
 
-    # ========== MODO RUTAS (múltiples integraciones) ==========
-    routes = optional(map(object({
-      methods = optional(list(string), ["ANY"])
-      type    = string # LAMBDA, VPC_LINK, MOCK, HTTP
+    # ========== RUTAS ==========
+    routes = map(object({
+      methods          = optional(list(string), ["GET"])
+      integration_type = string # LAMBDA, VPC_LINK, MOCK, HTTP
+
+      # Autenticación por ruta (CLAVE: permite API Key + Cognito)
+      authorization    = optional(string, "NONE") # NONE, COGNITO_USER_POOLS, CUSTOM, AWS_IAM
+      authorizer_key   = optional(string, "")     # Key del authorizer en authorizers map
+      api_key_required = optional(bool, false)
 
       # Para LAMBDA
       lambda_arn = optional(string, "")
@@ -108,44 +105,43 @@ variable "api_config" {
       vpc_link_id = optional(string, "")
 
       # Para MOCK
-      mock_response = optional(object({
-        status_code = optional(number, 200)
-        body        = optional(string, "{\"status\":\"ok\"}")
-      }), null)
+      mock_status_code = optional(number, 200)
+      mock_response    = optional(string, "{\"status\":\"ok\"}")
 
       # Para HTTP
-      http_url = optional(string, "")
+      http_url    = optional(string, "")
+      http_method = optional(string, "ANY")
 
-      # Auth override por ruta
-      auth = optional(object({
-        type                           = optional(string, "")
-        cognito_user_pool_arns         = optional(list(string), [])
-        authorizer_uri                 = optional(string, "")
-        authorizer_credentials         = optional(string, "")
-        authorizer_result_ttl          = optional(number, 300)
-        identity_source                = optional(string, "method.request.header.Authorization")
-        identity_validation_expression = optional(string, "")
-      }), null)
+      # Request parameters (path variables)
+      request_parameters = optional(map(bool), {})
+
+      # CORS por ruta
+      cors_enabled = optional(bool, false)
+    }))
+
+    # ========== API KEYS Y USAGE PLANS ==========
+    api_keys = optional(map(object({
+      description  = optional(string, "API Key managed by Terraform")
+      enabled      = optional(bool, true)
+      rate_limit   = optional(number, 100)
+      burst_limit  = optional(number, 50)
+      quota_limit  = optional(number, 10000)
+      quota_period = optional(string, "MONTH") # DAY, WEEK, MONTH
     })), {})
 
-    # ========== AUTENTICACIÓN (nivel API) ==========
-    auth = optional(object({
-      type                           = optional(string, "NONE")
-      cognito_user_pool_arns         = optional(list(string), [])
-      authorizer_uri                 = optional(string, "")
-      authorizer_credentials         = optional(string, "")
-      authorizer_result_ttl          = optional(number, 300)
-      identity_source                = optional(string, "method.request.header.Authorization")
-      identity_validation_expression = optional(string, "")
-    }), { type = "NONE" })
+    # ========== VPC LINK (crear nuevo) ==========
+    vpc_link = optional(object({
+      create     = optional(bool, false)
+      name       = optional(string, "")
+      target_arn = optional(string, "")
+    }), { create = false })
 
-    # ========== CORS ==========
+    # ========== CORS GLOBAL ==========
     cors = optional(object({
       enabled         = optional(bool, false)
       allowed_origins = optional(list(string), ["*"])
       allowed_methods = optional(list(string), ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"])
       allowed_headers = optional(list(string), ["Content-Type", "Authorization", "X-Amz-Date", "X-Api-Key", "X-Amz-Security-Token"])
-      expose_headers  = optional(list(string), [])
       max_age         = optional(number, 86400)
     }), { enabled = false })
 
@@ -157,7 +153,7 @@ variable "api_config" {
 
   default = {}
 
-  # Validaciones
+  # Validaciones (PC-IAC-002)
   validation {
     condition = alltrue([
       for key, config in var.api_config :
@@ -177,8 +173,22 @@ variable "api_config" {
   validation {
     condition = alltrue([
       for key, config in var.api_config :
-      contains(["NONE", "API_KEY", "IAM", "COGNITO", "LAMBDA_TOKEN", "LAMBDA_REQUEST"], config.auth.type)
+      alltrue([
+        for route_path, route in config.routes :
+        contains(["NONE", "COGNITO_USER_POOLS", "CUSTOM", "AWS_IAM"], route.authorization)
+      ])
     ])
-    error_message = "auth.type debe ser NONE, API_KEY, IAM, COGNITO, LAMBDA_TOKEN o LAMBDA_REQUEST."
+    error_message = "authorization debe ser NONE, COGNITO_USER_POOLS, CUSTOM o AWS_IAM."
+  }
+
+  validation {
+    condition = alltrue([
+      for key, config in var.api_config :
+      alltrue([
+        for route_path, route in config.routes :
+        contains(["LAMBDA", "VPC_LINK", "MOCK", "HTTP"], route.integration_type)
+      ])
+    ])
+    error_message = "integration_type debe ser LAMBDA, VPC_LINK, MOCK o HTTP."
   }
 }

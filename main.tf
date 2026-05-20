@@ -1,29 +1,30 @@
 ############################################################################
-# VPC Link (Opcional - modo simple con vpc_link.create = true)
+# API Gateway REST API - Terraform Nativo (PC-IAC-010: for_each obligatorio)
 ############################################################################
 
+# ========================================================================
+# VPC LINK (Opcional)
+# ========================================================================
 resource "aws_api_gateway_vpc_link" "this" {
   provider = aws.project
-  for_each = local.vpc_links_simple
+  for_each = local.vpc_links_to_create
 
-  name        = each.value.simple_vpc_link_name
-  description = "VPC Link for ${each.value.name}"
-  target_arns = [each.value.simple_vpc_link_target]
+  name        = each.value.name
+  description = "VPC Link for API Gateway"
+  target_arns = [each.value.target_arn]
 
   tags = each.value.tags
 }
 
-############################################################################
-# API Gateway REST API
-############################################################################
-
+# ========================================================================
+# REST API
+# ========================================================================
 resource "aws_api_gateway_rest_api" "this" {
   provider = aws.project
   for_each = local.api_resources
 
   name        = each.value.name
   description = each.value.description
-  body        = local.openapi_specs[each.key]
 
   endpoint_configuration {
     types            = [each.value.endpoint_type]
@@ -35,12 +36,221 @@ resource "aws_api_gateway_rest_api" "this" {
   binary_media_types           = length(each.value.binary_media_types) > 0 ? each.value.binary_media_types : null
 
   tags = each.value.tags
+
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
-############################################################################
-# API Gateway Deployment
-############################################################################
+# ========================================================================
+# AUTHORIZERS (Cognito o Lambda)
+# ========================================================================
+resource "aws_api_gateway_authorizer" "this" {
+  provider = aws.project
+  for_each = local.authorizers_map
 
+  name        = each.value.name
+  rest_api_id = aws_api_gateway_rest_api.this[each.value.api_key].id
+  type        = each.value.type
+
+  # Para Cognito
+  provider_arns = each.value.type == "COGNITO_USER_POOLS" ? each.value.provider_arns : null
+
+  # Para Lambda Authorizer
+  authorizer_uri                   = contains(["TOKEN", "REQUEST"], each.value.type) ? each.value.authorizer_uri : null
+  authorizer_credentials           = each.value.authorizer_credentials != "" ? each.value.authorizer_credentials : null
+  authorizer_result_ttl_in_seconds = each.value.authorizer_result_ttl_in_seconds
+  identity_source                  = each.value.identity_source
+  identity_validation_expression   = each.value.identity_validation_expression != "" ? each.value.identity_validation_expression : null
+}
+
+# ========================================================================
+# API GATEWAY RESOURCES (Paths)
+# ========================================================================
+resource "aws_api_gateway_resource" "this" {
+  provider = aws.project
+  for_each = local.path_resources
+
+  rest_api_id = aws_api_gateway_rest_api.this[each.value.api_key].id
+  parent_id = each.value.depth == 0 ? (
+    aws_api_gateway_rest_api.this[each.value.api_key].root_resource_id
+    ) : (
+    aws_api_gateway_resource.this["${each.value.api_key}:${each.value.parent_path}"].id
+  )
+  path_part = each.value.segment
+}
+
+# ========================================================================
+# API GATEWAY METHODS
+# ========================================================================
+resource "aws_api_gateway_method" "this" {
+  provider = aws.project
+  for_each = local.methods_map
+
+  rest_api_id = aws_api_gateway_rest_api.this[each.value.api_key].id
+  resource_id = aws_api_gateway_resource.this["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id
+  http_method = each.value.http_method
+
+  # CLAVE: authorization y api_key_required son independientes
+  authorization = each.value.authorization
+  authorizer_id = each.value.authorization != "NONE" && each.value.authorizer_key != "" ? (
+    aws_api_gateway_authorizer.this["${each.value.api_key}:${each.value.authorizer_key}"].id
+  ) : null
+  api_key_required = each.value.api_key_required
+
+  # Request parameters para path variables
+  request_parameters = length(each.value.request_parameters) > 0 ? each.value.request_parameters : null
+}
+
+# ========================================================================
+# API GATEWAY INTEGRATIONS
+# ========================================================================
+resource "aws_api_gateway_integration" "this" {
+  provider = aws.project
+  for_each = local.methods_map
+
+  rest_api_id = aws_api_gateway_rest_api.this[each.value.api_key].id
+  resource_id = aws_api_gateway_resource.this["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id
+  http_method = aws_api_gateway_method.this[each.key].http_method
+
+  # Tipo de integración
+  type = each.value.integration_type == "LAMBDA" ? "AWS_PROXY" : (
+    each.value.integration_type == "VPC_LINK" ? "HTTP_PROXY" : (
+      each.value.integration_type == "HTTP" ? "HTTP_PROXY" : "MOCK"
+    )
+  )
+
+  # Para Lambda
+  integration_http_method = each.value.integration_type == "LAMBDA" ? "POST" : (
+    each.value.integration_type == "MOCK" ? null : each.value.http_method_integration
+  )
+  uri = each.value.integration_type == "LAMBDA" ? each.value.lambda_arn : (
+    each.value.integration_type == "VPC_LINK" ? each.value.backend_url : (
+      each.value.integration_type == "HTTP" ? each.value.http_url : null
+    )
+  )
+
+  # Para VPC Link
+  connection_type = each.value.integration_type == "VPC_LINK" ? "VPC_LINK" : null
+  connection_id   = each.value.integration_type == "VPC_LINK" ? each.value.vpc_link_id : null
+
+  # Para Mock
+  request_templates = each.value.integration_type == "MOCK" ? {
+    "application/json" = "{\"statusCode\": ${each.value.mock_status_code}}"
+  } : null
+
+  timeout_milliseconds = 29000
+
+  depends_on = [aws_api_gateway_method.this]
+}
+
+# ========================================================================
+# MOCK INTEGRATION RESPONSE
+# ========================================================================
+resource "aws_api_gateway_method_response" "mock" {
+  provider = aws.project
+  for_each = {
+    for key, method in local.methods_map : key => method
+    if method.integration_type == "MOCK"
+  }
+
+  rest_api_id = aws_api_gateway_rest_api.this[each.value.api_key].id
+  resource_id = aws_api_gateway_resource.this["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id
+  http_method = aws_api_gateway_method.this[each.key].http_method
+  status_code = tostring(each.value.mock_status_code)
+
+  depends_on = [aws_api_gateway_method.this]
+}
+
+resource "aws_api_gateway_integration_response" "mock" {
+  provider = aws.project
+  for_each = {
+    for key, method in local.methods_map : key => method
+    if method.integration_type == "MOCK"
+  }
+
+  rest_api_id = aws_api_gateway_rest_api.this[each.value.api_key].id
+  resource_id = aws_api_gateway_resource.this["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id
+  http_method = aws_api_gateway_method.this[each.key].http_method
+  status_code = aws_api_gateway_method_response.mock[each.key].status_code
+
+  response_templates = {
+    "application/json" = each.value.mock_response
+  }
+
+  depends_on = [aws_api_gateway_integration.this]
+}
+
+# ========================================================================
+# CORS OPTIONS METHODS
+# ========================================================================
+resource "aws_api_gateway_method" "cors" {
+  provider = aws.project
+  for_each = local.cors_options_methods
+
+  rest_api_id   = aws_api_gateway_rest_api.this[each.value.api_key].id
+  resource_id   = aws_api_gateway_resource.this["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id
+  http_method   = "OPTIONS"
+  authorization = "NONE"
+}
+
+resource "aws_api_gateway_integration" "cors" {
+  provider = aws.project
+  for_each = local.cors_options_methods
+
+  rest_api_id = aws_api_gateway_rest_api.this[each.value.api_key].id
+  resource_id = aws_api_gateway_resource.this["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id
+  http_method = aws_api_gateway_method.cors[each.key].http_method
+  type        = "MOCK"
+
+  request_templates = {
+    "application/json" = "{\"statusCode\": 200}"
+  }
+
+  depends_on = [aws_api_gateway_method.cors]
+}
+
+resource "aws_api_gateway_method_response" "cors" {
+  provider = aws.project
+  for_each = local.cors_options_methods
+
+  rest_api_id = aws_api_gateway_rest_api.this[each.value.api_key].id
+  resource_id = aws_api_gateway_resource.this["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id
+  http_method = aws_api_gateway_method.cors[each.key].http_method
+  status_code = "200"
+
+  response_parameters = {
+    "method.response.header.Access-Control-Allow-Headers" = true
+    "method.response.header.Access-Control-Allow-Methods" = true
+    "method.response.header.Access-Control-Allow-Origin"  = true
+    "method.response.header.Access-Control-Max-Age"       = true
+  }
+
+  depends_on = [aws_api_gateway_method.cors]
+}
+
+resource "aws_api_gateway_integration_response" "cors" {
+  provider = aws.project
+  for_each = local.cors_options_methods
+
+  rest_api_id = aws_api_gateway_rest_api.this[each.value.api_key].id
+  resource_id = aws_api_gateway_resource.this["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id
+  http_method = aws_api_gateway_method.cors[each.key].http_method
+  status_code = aws_api_gateway_method_response.cors[each.key].status_code
+
+  response_parameters = {
+    "method.response.header.Access-Control-Allow-Headers" = "'${join(",", each.value.cors_config.allowed_headers)}'"
+    "method.response.header.Access-Control-Allow-Methods" = "'${join(",", each.value.cors_config.allowed_methods)}'"
+    "method.response.header.Access-Control-Allow-Origin"  = "'${join(",", each.value.cors_config.allowed_origins)}'"
+    "method.response.header.Access-Control-Max-Age"       = "'${each.value.cors_config.max_age}'"
+  }
+
+  depends_on = [aws_api_gateway_integration.cors]
+}
+
+# ========================================================================
+# DEPLOYMENT
+# ========================================================================
 resource "aws_api_gateway_deployment" "this" {
   provider = aws.project
   for_each = local.api_resources
@@ -49,10 +259,10 @@ resource "aws_api_gateway_deployment" "this" {
 
   triggers = {
     redeployment = sha1(jsonencode([
-      aws_api_gateway_rest_api.this[each.key].body,
-      each.value.mode == "SIMPLE" && each.value.simple_integration_type == "VPC_LINK" ? (
-        each.value.simple_vpc_link_create ? aws_api_gateway_vpc_link.this[each.key].id : each.value.simple_vpc_link_id
-      ) : ""
+      [for k, v in aws_api_gateway_resource.this : v.id if startswith(k, "${each.key}:")],
+      [for k, v in aws_api_gateway_method.this : v.id if startswith(k, "${each.key}:")],
+      [for k, v in aws_api_gateway_integration.this : v.id if startswith(k, "${each.key}:")],
+      [for k, v in aws_api_gateway_authorizer.this : v.id if startswith(k, "${each.key}:")],
     ]))
   }
 
@@ -60,13 +270,16 @@ resource "aws_api_gateway_deployment" "this" {
     create_before_destroy = true
   }
 
-  depends_on = [aws_api_gateway_vpc_link.this]
+  depends_on = [
+    aws_api_gateway_integration.this,
+    aws_api_gateway_integration_response.mock,
+    aws_api_gateway_integration_response.cors,
+  ]
 }
 
-############################################################################
-# API Gateway Stage
-############################################################################
-
+# ========================================================================
+# STAGE
+# ========================================================================
 resource "aws_api_gateway_stage" "this" {
   provider = aws.project
   for_each = local.api_resources
@@ -77,11 +290,6 @@ resource "aws_api_gateway_stage" "this" {
 
   xray_tracing_enabled = each.value.xray_tracing_enabled
 
-  # Stage variables para VPC Link (modo simple)
-  variables = each.value.mode == "SIMPLE" && each.value.simple_integration_type == "VPC_LINK" ? {
-    vpcLinkId = each.value.simple_vpc_link_create ? aws_api_gateway_vpc_link.this[each.key].id : each.value.simple_vpc_link_id
-  } : {}
-
   dynamic "access_log_settings" {
     for_each = each.value.access_log_destination_arn != "" ? [1] : []
     content {
@@ -91,59 +299,80 @@ resource "aws_api_gateway_stage" "this" {
   }
 
   tags = each.value.tags
-
-  depends_on = [aws_api_gateway_vpc_link.this]
 }
 
-############################################################################
-# Lambda Permissions - Modo Simple
-############################################################################
-
-resource "aws_lambda_permission" "simple" {
+# ========================================================================
+# API KEYS
+# ========================================================================
+resource "aws_api_gateway_api_key" "this" {
   provider = aws.project
-  for_each = local.lambda_permissions_simple
+  for_each = local.api_keys_map
 
-  statement_id  = "AllowAPIGatewayInvoke-${each.key}"
-  action        = "lambda:InvokeFunction"
-  function_name = each.value.lambda_name
-  principal     = "apigateway.amazonaws.com"
-  source_arn    = "${aws_api_gateway_rest_api.this[each.key].execution_arn}/*/*"
+  name        = each.value.name
+  description = each.value.description
+  enabled     = each.value.enabled
+
+  tags = local.api_resources[each.value.api_key].tags
 }
 
-############################################################################
-# Lambda Permissions - Modo Rutas
-############################################################################
-
-resource "aws_lambda_permission" "routes" {
+# ========================================================================
+# USAGE PLANS
+# ========================================================================
+resource "aws_api_gateway_usage_plan" "this" {
   provider = aws.project
-  for_each = local.lambda_permissions_routes
+  for_each = local.api_keys_map
 
-  statement_id  = "AllowAPIGatewayInvoke-${each.key}"
+  name = "${local.governance_prefix}-usageplan-${each.value.key_name}"
+
+  api_stages {
+    api_id = aws_api_gateway_rest_api.this[each.value.api_key].id
+    stage  = aws_api_gateway_stage.this[each.value.api_key].stage_name
+  }
+
+  throttle_settings {
+    rate_limit  = each.value.rate_limit
+    burst_limit = each.value.burst_limit
+  }
+
+  quota_settings {
+    limit  = each.value.quota_limit
+    period = each.value.quota_period
+  }
+
+  tags = local.api_resources[each.value.api_key].tags
+
+  depends_on = [aws_api_gateway_stage.this]
+}
+
+# ========================================================================
+# USAGE PLAN KEY (Asociación API Key con Usage Plan)
+# ========================================================================
+resource "aws_api_gateway_usage_plan_key" "this" {
+  provider = aws.project
+  for_each = local.api_keys_map
+
+  key_id        = aws_api_gateway_api_key.this[each.key].id
+  key_type      = "API_KEY"
+  usage_plan_id = aws_api_gateway_usage_plan.this[each.key].id
+}
+
+# ========================================================================
+# LAMBDA PERMISSIONS
+# ========================================================================
+resource "aws_lambda_permission" "this" {
+  provider = aws.project
+  for_each = local.lambda_permissions
+
+  statement_id  = "AllowAPIGatewayInvoke-${replace(each.key, ":", "-")}"
   action        = "lambda:InvokeFunction"
   function_name = each.value.lambda_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_api_gateway_rest_api.this[each.value.api_key].execution_arn}/*/*"
 }
 
-############################################################################
-# Lambda Permissions - Authorizers
-############################################################################
-
-resource "aws_lambda_permission" "authorizer" {
-  provider = aws.project
-  for_each = local.authorizer_lambda_permissions
-
-  statement_id  = "AllowAPIGatewayAuthorizer-${each.key}"
-  action        = "lambda:InvokeFunction"
-  function_name = regex("function:([^:/]+)", each.value.lambda_arn)[0]
-  principal     = "apigateway.amazonaws.com"
-  source_arn    = "${aws_api_gateway_rest_api.this[each.key].execution_arn}/authorizers/*"
-}
-
-############################################################################
-# Custom Domain Name (Opcional)
-############################################################################
-
+# ========================================================================
+# CUSTOM DOMAIN NAME (Opcional)
+# ========================================================================
 resource "aws_api_gateway_domain_name" "this" {
   provider = aws.project
   for_each = {
@@ -162,10 +391,9 @@ resource "aws_api_gateway_domain_name" "this" {
   tags = each.value.tags
 }
 
-############################################################################
-# Base Path Mapping (para Custom Domain)
-############################################################################
-
+# ========================================================================
+# BASE PATH MAPPING (para Custom Domain)
+# ========================================================================
 resource "aws_api_gateway_base_path_mapping" "this" {
   provider = aws.project
   for_each = {

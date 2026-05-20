@@ -1,9 +1,25 @@
 ############################################################################
-# Data Sources del Consumidor
+# Data Sources del Ejemplo (PC-IAC-011)
 ############################################################################
 
-# Información de la cuenta actual
-data "aws_caller_identity" "current" {}
+# Cognito User Pool
+data "aws_cognito_user_pools" "main" {
+  provider = aws.principal
+  name     = var.cognito_user_pool_name
+}
 
-# Información de la región actual
-data "aws_region" "current" {}
+# Lambda Functions
+data "aws_lambda_function" "auth" {
+  provider      = aws.principal
+  function_name = var.lambda_auth_name
+}
+
+data "aws_lambda_function" "sync" {
+  provider      = aws.principal
+  function_name = var.lambda_sync_name
+}
+
+data "aws_lambda_function" "webhook" {
+  provider      = aws.principal
+  function_name = var.lambda_webhook_name
+}

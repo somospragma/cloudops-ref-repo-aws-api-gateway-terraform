@@ -1,43 +1,16 @@
 ############################################################################
-# Configuración de Providers
+# Configuración de Providers (PC-IAC-005)
 ############################################################################
 
-terraform {
-  required_version = ">= 1.0.0"
-
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = ">= 5.0.0"
-    }
-  }
-}
-
-# Provider principal
 provider "aws" {
   region = var.region
+  alias  = "principal"
 
-  default_tags {
-    tags = {
-      Client      = var.client
-      Project     = var.project
-      Environment = var.environment
-      ManagedBy   = "Terraform"
-    }
+  assume_role {
+    role_arn = var.deploy_role_arn
   }
-}
-
-# Alias para el módulo (PC-IAC-005)
-provider "aws" {
-  alias  = "main"
-  region = var.region
 
   default_tags {
-    tags = {
-      Client      = var.client
-      Project     = var.project
-      Environment = var.environment
-      ManagedBy   = "Terraform"
-    }
+    tags = var.common_tags
   }
 }

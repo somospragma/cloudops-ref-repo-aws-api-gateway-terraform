@@ -1,7 +1,10 @@
 ############################################################################
-# Outputs Granulares (PC-IAC-010)
+# Outputs Granulares (PC-IAC-007)
 ############################################################################
 
+# ========================================================================
+# REST API
+# ========================================================================
 output "rest_api_ids" {
   description = "Mapa de IDs de las REST APIs creadas"
   value = {
@@ -30,6 +33,9 @@ output "root_resource_ids" {
   }
 }
 
+# ========================================================================
+# STAGE
+# ========================================================================
 output "invoke_urls" {
   description = "Mapa de URLs de invocación de las APIs"
   value = {
@@ -51,6 +57,9 @@ output "stage_names" {
   }
 }
 
+# ========================================================================
+# DEPLOYMENT
+# ========================================================================
 output "deployment_ids" {
   description = "Mapa de IDs de los deployments"
   value = {
@@ -58,6 +67,47 @@ output "deployment_ids" {
   }
 }
 
+# ========================================================================
+# AUTHORIZERS
+# ========================================================================
+output "authorizer_ids" {
+  description = "Mapa de IDs de los authorizers creados"
+  value = {
+    for key, auth in aws_api_gateway_authorizer.this : key => auth.id
+  }
+}
+
+# ========================================================================
+# API KEYS
+# ========================================================================
+output "api_key_ids" {
+  description = "Mapa de IDs de las API Keys creadas"
+  value = {
+    for key, api_key in aws_api_gateway_api_key.this : key => api_key.id
+  }
+}
+
+output "api_key_values" {
+  description = "Mapa de valores de las API Keys (sensible)"
+  value = {
+    for key, api_key in aws_api_gateway_api_key.this : key => api_key.value
+  }
+  sensitive = true
+}
+
+# ========================================================================
+# USAGE PLANS
+# ========================================================================
+output "usage_plan_ids" {
+  description = "Mapa de IDs de los Usage Plans creados"
+  value = {
+    for key, plan in aws_api_gateway_usage_plan.this : key => plan.id
+  }
+}
+
+# ========================================================================
+# VPC LINKS
+# ========================================================================
 output "vpc_link_ids" {
   description = "Mapa de IDs de VPC Links creados"
   value = {
@@ -72,8 +122,11 @@ output "vpc_link_arns" {
   }
 }
 
+# ========================================================================
+# CUSTOM DOMAIN
+# ========================================================================
 output "custom_domain_names" {
-  description = "Mapa de nombres de dominio personalizados"
+  description = "Mapa de información de dominios personalizados"
   value = {
     for key, domain in aws_api_gateway_domain_name.this : key => {
       domain_name            = domain.domain_name
@@ -85,6 +138,19 @@ output "custom_domain_names" {
   }
 }
 
+# ========================================================================
+# RECURSOS (para referencia)
+# ========================================================================
+output "resource_ids" {
+  description = "Mapa de IDs de los recursos (paths) creados"
+  value = {
+    for key, resource in aws_api_gateway_resource.this : key => resource.id
+  }
+}
+
+# ========================================================================
+# OUTPUT CONSOLIDADO
+# ========================================================================
 output "apis" {
   description = "Mapa consolidado con toda la información de las APIs"
   value = {
@@ -97,7 +163,6 @@ output "apis" {
       stage_arn        = aws_api_gateway_stage.this[key].arn
       stage_name       = aws_api_gateway_stage.this[key].stage_name
       deployment_id    = aws_api_gateway_deployment.this[key].id
-      mode             = local.api_resources[key].mode
     }
   }
 }
