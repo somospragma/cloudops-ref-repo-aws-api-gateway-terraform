@@ -100,7 +100,9 @@ locals {
 
   # Mapa de rutas para for_each
   routes_map = {
-    for route in local.routes_flat : route.route_key => route
+    for route in local.routes_flat : route.route_key => merge(route, {
+      path_depth = length(split("/", trimprefix(route.route_path, "/"))) - 1
+    })
   }
 
   # ========================================================================
@@ -126,6 +128,8 @@ locals {
         http_url                = route.http_url
         http_method_integration = route.http_method
         request_parameters      = route.request_parameters
+        # Calcular depth del path para lookup de recursos
+        path_depth              = length(split("/", trimprefix(route.route_path, "/"))) - 1
       }
     ]
   ])
@@ -246,4 +250,22 @@ locals {
   path_resources = {
     for key, segments in local.path_resources_map : key => segments[0]
   }
+
+  # ========================================================================
+  # 11. SEPARAR PATHS POR NIVEL DE PROFUNDIDAD
+  # ========================================================================
+  path_resources_level_0 = {
+    for key, res in local.path_resources : key => res if res.depth == 0
+  }
+  path_resources_level_1 = {
+    for key, res in local.path_resources : key => res if res.depth == 1
+  }
+  path_resources_level_2 = {
+    for key, res in local.path_resources : key => res if res.depth == 2
+  }
+
+  # ========================================================================
+  # 12. HELPER: Depth de cada ruta para lookup de recursos
+  # ========================================================================
+  # (Ya incluido en routes_map y methods_map como path_depth)
 }

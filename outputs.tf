@@ -143,9 +143,11 @@ output "custom_domain_names" {
 # ========================================================================
 output "resource_ids" {
   description = "Mapa de IDs de los recursos (paths) creados"
-  value = {
-    for key, resource in aws_api_gateway_resource.this : key => resource.id
-  }
+  value = merge(
+    { for key, resource in aws_api_gateway_resource.level_0 : key => resource.id },
+    { for key, resource in aws_api_gateway_resource.level_1 : key => resource.id },
+    { for key, resource in aws_api_gateway_resource.level_2 : key => resource.id }
+  )
 }
 
 # ========================================================================

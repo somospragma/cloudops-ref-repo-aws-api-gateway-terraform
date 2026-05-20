@@ -32,6 +32,12 @@ variable "environment" {
   }
 }
 
+variable "region" {
+  description = "Región de AWS"
+  type        = string
+  default     = "us-east-1"
+}
+
 ############################################################################
 # Variable de Configuración Principal - API Gateway (PC-IAC-002, PC-IAC-010)
 ############################################################################
