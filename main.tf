@@ -1,5 +1,6 @@
 ############################################################################
 # API Gateway REST API - Terraform Nativo (PC-IAC-010: for_each obligatorio)
+# Soporta hasta 5 niveles de profundidad en paths
 ############################################################################
 
 # ========================================================================
@@ -65,29 +66,23 @@ resource "aws_api_gateway_authorizer" "this" {
 }
 
 # ========================================================================
-# API GATEWAY RESOURCES (Paths) - Nivel 0 (directamente bajo root)
+# API GATEWAY RESOURCES (Paths) - 5 Niveles de Profundidad
 # ========================================================================
+
+# Nivel 0: /resource (directamente bajo root)
 resource "aws_api_gateway_resource" "level_0" {
   provider = aws.project
-  for_each = {
-    for key, res in local.path_resources : key => res
-    if res.depth == 0
-  }
+  for_each = { for key, res in local.path_resources : key => res if res.depth == 0 }
 
   rest_api_id = aws_api_gateway_rest_api.this[each.value.api_key].id
   parent_id   = aws_api_gateway_rest_api.this[each.value.api_key].root_resource_id
   path_part   = each.value.segment
 }
 
-# ========================================================================
-# API GATEWAY RESOURCES (Paths) - Nivel 1 (un nivel de profundidad)
-# ========================================================================
+# Nivel 1: /resource/child
 resource "aws_api_gateway_resource" "level_1" {
   provider = aws.project
-  for_each = {
-    for key, res in local.path_resources : key => res
-    if res.depth == 1
-  }
+  for_each = { for key, res in local.path_resources : key => res if res.depth == 1 }
 
   rest_api_id = aws_api_gateway_rest_api.this[each.value.api_key].id
   parent_id   = aws_api_gateway_resource.level_0["${each.value.api_key}:${each.value.parent_path}"].id
@@ -96,21 +91,40 @@ resource "aws_api_gateway_resource" "level_1" {
   depends_on = [aws_api_gateway_resource.level_0]
 }
 
-# ========================================================================
-# API GATEWAY RESOURCES (Paths) - Nivel 2 (dos niveles de profundidad)
-# ========================================================================
+# Nivel 2: /resource/child/grandchild
 resource "aws_api_gateway_resource" "level_2" {
   provider = aws.project
-  for_each = {
-    for key, res in local.path_resources : key => res
-    if res.depth == 2
-  }
+  for_each = { for key, res in local.path_resources : key => res if res.depth == 2 }
 
   rest_api_id = aws_api_gateway_rest_api.this[each.value.api_key].id
   parent_id   = aws_api_gateway_resource.level_1["${each.value.api_key}:${each.value.parent_path}"].id
   path_part   = each.value.segment
 
   depends_on = [aws_api_gateway_resource.level_1]
+}
+
+# Nivel 3: /resource/child/grandchild/great
+resource "aws_api_gateway_resource" "level_3" {
+  provider = aws.project
+  for_each = { for key, res in local.path_resources : key => res if res.depth == 3 }
+
+  rest_api_id = aws_api_gateway_rest_api.this[each.value.api_key].id
+  parent_id   = aws_api_gateway_resource.level_2["${each.value.api_key}:${each.value.parent_path}"].id
+  path_part   = each.value.segment
+
+  depends_on = [aws_api_gateway_resource.level_2]
+}
+
+# Nivel 4: /resource/child/grandchild/great/greatest
+resource "aws_api_gateway_resource" "level_4" {
+  provider = aws.project
+  for_each = { for key, res in local.path_resources : key => res if res.depth == 4 }
+
+  rest_api_id = aws_api_gateway_rest_api.this[each.value.api_key].id
+  parent_id   = aws_api_gateway_resource.level_3["${each.value.api_key}:${each.value.parent_path}"].id
+  path_part   = each.value.segment
+
+  depends_on = [aws_api_gateway_resource.level_3]
 }
 
 # ========================================================================
@@ -124,7 +138,9 @@ resource "aws_api_gateway_method" "this" {
   resource_id = (
     each.value.path_depth == 0 ? aws_api_gateway_resource.level_0["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id :
     each.value.path_depth == 1 ? aws_api_gateway_resource.level_1["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id :
-    aws_api_gateway_resource.level_2["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id
+    each.value.path_depth == 2 ? aws_api_gateway_resource.level_2["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id :
+    each.value.path_depth == 3 ? aws_api_gateway_resource.level_3["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id :
+    aws_api_gateway_resource.level_4["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id
   )
   http_method = each.value.http_method
 
@@ -139,7 +155,9 @@ resource "aws_api_gateway_method" "this" {
   depends_on = [
     aws_api_gateway_resource.level_0,
     aws_api_gateway_resource.level_1,
-    aws_api_gateway_resource.level_2
+    aws_api_gateway_resource.level_2,
+    aws_api_gateway_resource.level_3,
+    aws_api_gateway_resource.level_4,
   ]
 }
 
@@ -154,7 +172,9 @@ resource "aws_api_gateway_integration" "this" {
   resource_id = (
     each.value.path_depth == 0 ? aws_api_gateway_resource.level_0["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id :
     each.value.path_depth == 1 ? aws_api_gateway_resource.level_1["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id :
-    aws_api_gateway_resource.level_2["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id
+    each.value.path_depth == 2 ? aws_api_gateway_resource.level_2["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id :
+    each.value.path_depth == 3 ? aws_api_gateway_resource.level_3["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id :
+    aws_api_gateway_resource.level_4["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id
   )
   http_method = aws_api_gateway_method.this[each.key].http_method
 
@@ -194,16 +214,15 @@ resource "aws_api_gateway_integration" "this" {
 # ========================================================================
 resource "aws_api_gateway_method_response" "mock" {
   provider = aws.project
-  for_each = {
-    for key, method in local.methods_map : key => method
-    if method.integration_type == "MOCK"
-  }
+  for_each = { for key, method in local.methods_map : key => method if method.integration_type == "MOCK" }
 
   rest_api_id = aws_api_gateway_rest_api.this[each.value.api_key].id
   resource_id = (
     each.value.path_depth == 0 ? aws_api_gateway_resource.level_0["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id :
     each.value.path_depth == 1 ? aws_api_gateway_resource.level_1["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id :
-    aws_api_gateway_resource.level_2["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id
+    each.value.path_depth == 2 ? aws_api_gateway_resource.level_2["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id :
+    each.value.path_depth == 3 ? aws_api_gateway_resource.level_3["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id :
+    aws_api_gateway_resource.level_4["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id
   )
   http_method = aws_api_gateway_method.this[each.key].http_method
   status_code = tostring(each.value.mock_status_code)
@@ -213,16 +232,15 @@ resource "aws_api_gateway_method_response" "mock" {
 
 resource "aws_api_gateway_integration_response" "mock" {
   provider = aws.project
-  for_each = {
-    for key, method in local.methods_map : key => method
-    if method.integration_type == "MOCK"
-  }
+  for_each = { for key, method in local.methods_map : key => method if method.integration_type == "MOCK" }
 
   rest_api_id = aws_api_gateway_rest_api.this[each.value.api_key].id
   resource_id = (
     each.value.path_depth == 0 ? aws_api_gateway_resource.level_0["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id :
     each.value.path_depth == 1 ? aws_api_gateway_resource.level_1["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id :
-    aws_api_gateway_resource.level_2["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id
+    each.value.path_depth == 2 ? aws_api_gateway_resource.level_2["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id :
+    each.value.path_depth == 3 ? aws_api_gateway_resource.level_3["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id :
+    aws_api_gateway_resource.level_4["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id
   )
   http_method = aws_api_gateway_method.this[each.key].http_method
   status_code = aws_api_gateway_method_response.mock[each.key].status_code
@@ -233,7 +251,6 @@ resource "aws_api_gateway_integration_response" "mock" {
 
   depends_on = [aws_api_gateway_integration.this]
 }
-
 
 # ========================================================================
 # CORS OPTIONS METHODS
@@ -246,7 +263,9 @@ resource "aws_api_gateway_method" "cors" {
   resource_id = (
     each.value.path_depth == 0 ? aws_api_gateway_resource.level_0["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id :
     each.value.path_depth == 1 ? aws_api_gateway_resource.level_1["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id :
-    aws_api_gateway_resource.level_2["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id
+    each.value.path_depth == 2 ? aws_api_gateway_resource.level_2["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id :
+    each.value.path_depth == 3 ? aws_api_gateway_resource.level_3["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id :
+    aws_api_gateway_resource.level_4["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id
   )
   http_method   = "OPTIONS"
   authorization = "NONE"
@@ -254,7 +273,9 @@ resource "aws_api_gateway_method" "cors" {
   depends_on = [
     aws_api_gateway_resource.level_0,
     aws_api_gateway_resource.level_1,
-    aws_api_gateway_resource.level_2
+    aws_api_gateway_resource.level_2,
+    aws_api_gateway_resource.level_3,
+    aws_api_gateway_resource.level_4,
   ]
 }
 
@@ -266,7 +287,9 @@ resource "aws_api_gateway_integration" "cors" {
   resource_id = (
     each.value.path_depth == 0 ? aws_api_gateway_resource.level_0["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id :
     each.value.path_depth == 1 ? aws_api_gateway_resource.level_1["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id :
-    aws_api_gateway_resource.level_2["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id
+    each.value.path_depth == 2 ? aws_api_gateway_resource.level_2["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id :
+    each.value.path_depth == 3 ? aws_api_gateway_resource.level_3["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id :
+    aws_api_gateway_resource.level_4["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id
   )
   http_method = aws_api_gateway_method.cors[each.key].http_method
   type        = "MOCK"
@@ -286,7 +309,9 @@ resource "aws_api_gateway_method_response" "cors" {
   resource_id = (
     each.value.path_depth == 0 ? aws_api_gateway_resource.level_0["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id :
     each.value.path_depth == 1 ? aws_api_gateway_resource.level_1["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id :
-    aws_api_gateway_resource.level_2["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id
+    each.value.path_depth == 2 ? aws_api_gateway_resource.level_2["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id :
+    each.value.path_depth == 3 ? aws_api_gateway_resource.level_3["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id :
+    aws_api_gateway_resource.level_4["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id
   )
   http_method = aws_api_gateway_method.cors[each.key].http_method
   status_code = "200"
@@ -309,7 +334,9 @@ resource "aws_api_gateway_integration_response" "cors" {
   resource_id = (
     each.value.path_depth == 0 ? aws_api_gateway_resource.level_0["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id :
     each.value.path_depth == 1 ? aws_api_gateway_resource.level_1["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id :
-    aws_api_gateway_resource.level_2["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id
+    each.value.path_depth == 2 ? aws_api_gateway_resource.level_2["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id :
+    each.value.path_depth == 3 ? aws_api_gateway_resource.level_3["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id :
+    aws_api_gateway_resource.level_4["${each.value.api_key}:${trimprefix(each.value.route_path, "/")}"].id
   )
   http_method = aws_api_gateway_method.cors[each.key].http_method
   status_code = aws_api_gateway_method_response.cors[each.key].status_code
@@ -338,6 +365,8 @@ resource "aws_api_gateway_deployment" "this" {
       [for k, v in aws_api_gateway_resource.level_0 : v.id if startswith(k, "${each.key}:")],
       [for k, v in aws_api_gateway_resource.level_1 : v.id if startswith(k, "${each.key}:")],
       [for k, v in aws_api_gateway_resource.level_2 : v.id if startswith(k, "${each.key}:")],
+      [for k, v in aws_api_gateway_resource.level_3 : v.id if startswith(k, "${each.key}:")],
+      [for k, v in aws_api_gateway_resource.level_4 : v.id if startswith(k, "${each.key}:")],
       [for k, v in aws_api_gateway_method.this : v.id if startswith(k, "${each.key}:")],
       [for k, v in aws_api_gateway_integration.this : v.id if startswith(k, "${each.key}:")],
       [for k, v in aws_api_gateway_authorizer.this : v.id if startswith(k, "${each.key}:")],

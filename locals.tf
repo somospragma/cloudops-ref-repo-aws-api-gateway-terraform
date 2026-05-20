@@ -252,7 +252,7 @@ locals {
   }
 
   # ========================================================================
-  # 11. SEPARAR PATHS POR NIVEL DE PROFUNDIDAD
+  # 11. SEPARAR PATHS POR NIVEL DE PROFUNDIDAD (5 niveles)
   # ========================================================================
   path_resources_level_0 = {
     for key, res in local.path_resources : key => res if res.depth == 0
@@ -263,9 +263,10 @@ locals {
   path_resources_level_2 = {
     for key, res in local.path_resources : key => res if res.depth == 2
   }
-
-  # ========================================================================
-  # 12. HELPER: Depth de cada ruta para lookup de recursos
-  # ========================================================================
-  # (Ya incluido en routes_map y methods_map como path_depth)
+  path_resources_level_3 = {
+    for key, res in local.path_resources : key => res if res.depth == 3
+  }
+  path_resources_level_4 = {
+    for key, res in local.path_resources : key => res if res.depth == 4
+  }
 }
