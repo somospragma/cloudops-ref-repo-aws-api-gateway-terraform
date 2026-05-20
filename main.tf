@@ -120,11 +120,16 @@ resource "aws_api_gateway_integration" "this" {
     )
   )
 
-  # Para Lambda
+  # Para Lambda - construir URI de integración desde el ARN de Lambda
   integration_http_method = each.value.integration_type == "LAMBDA" ? "POST" : (
     each.value.integration_type == "MOCK" ? null : each.value.http_method_integration
   )
-  uri = each.value.integration_type == "LAMBDA" ? each.value.lambda_arn : (
+  uri = each.value.integration_type == "LAMBDA" ? (
+    # Si ya viene con formato de integración, usarlo directo; si no, construirlo
+    can(regex("^arn:aws:apigateway:", each.value.lambda_arn)) ? each.value.lambda_arn : (
+      "arn:aws:apigateway:${data.aws_region.current.name}:lambda:path/2015-03-31/functions/${each.value.lambda_arn}/invocations"
+    )
+  ) : (
     each.value.integration_type == "VPC_LINK" ? each.value.backend_url : (
       each.value.integration_type == "HTTP" ? each.value.http_url : null
     )

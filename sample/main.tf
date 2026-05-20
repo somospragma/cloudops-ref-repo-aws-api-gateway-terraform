@@ -37,7 +37,7 @@ module "api_gateway" {
         "/auth/login" = {
           methods          = ["GET"]
           integration_type = "LAMBDA"
-          lambda_arn       = data.aws_lambda_function.auth.invoke_arn
+          lambda_arn       = data.aws_lambda_function.auth.arn
           api_key_required = true
           authorization    = "NONE"
         }
@@ -46,7 +46,7 @@ module "api_gateway" {
         "/auth/refresh" = {
           methods          = ["POST"]
           integration_type = "LAMBDA"
-          lambda_arn       = data.aws_lambda_function.auth.invoke_arn
+          lambda_arn       = data.aws_lambda_function.auth.arn
           api_key_required = true
           authorization    = "NONE"
         }
@@ -55,7 +55,7 @@ module "api_gateway" {
         "/accounts" = {
           methods          = ["GET"]
           integration_type = "LAMBDA"
-          lambda_arn       = data.aws_lambda_function.sync.invoke_arn
+          lambda_arn       = data.aws_lambda_function.sync.arn
           api_key_required = true
           authorization    = "COGNITO_USER_POOLS"
           authorizer_key   = "cognito"
@@ -65,7 +65,7 @@ module "api_gateway" {
         "/sync" = {
           methods          = ["POST"]
           integration_type = "LAMBDA"
-          lambda_arn       = data.aws_lambda_function.sync.invoke_arn
+          lambda_arn       = data.aws_lambda_function.sync.arn
           api_key_required = true
           authorization    = "COGNITO_USER_POOLS"
           authorizer_key   = "cognito"
@@ -75,7 +75,7 @@ module "api_gateway" {
         "/taxonomy" = {
           methods          = ["GET"]
           integration_type = "LAMBDA"
-          lambda_arn       = data.aws_lambda_function.sync.invoke_arn
+          lambda_arn       = data.aws_lambda_function.sync.arn
           api_key_required = true
           authorization    = "COGNITO_USER_POOLS"
           authorizer_key   = "cognito"
@@ -85,7 +85,7 @@ module "api_gateway" {
         "/config" = {
           methods          = ["GET"]
           integration_type = "LAMBDA"
-          lambda_arn       = data.aws_lambda_function.sync.invoke_arn
+          lambda_arn       = data.aws_lambda_function.sync.arn
           api_key_required = true
           authorization    = "COGNITO_USER_POOLS"
           authorizer_key   = "cognito"
@@ -106,7 +106,7 @@ module "api_gateway" {
         "/webhook/github" = {
           methods          = ["POST"]
           integration_type = "LAMBDA"
-          lambda_arn       = data.aws_lambda_function.webhook.invoke_arn
+          lambda_arn       = data.aws_lambda_function.webhook.arn
           api_key_required = true
           authorization    = "NONE"
         }
