@@ -202,17 +202,12 @@ locals {
   # ========================================================================
   # 8. LAMBDAS QUE NECESITAN PERMISOS
   # ========================================================================
+  # NOTA: Las keys del for_each deben ser estáticas (conocidas en plan time).
+  # El lambda_arn puede ser dinámico, pero la key (method_key) es estática.
   lambda_permissions = {
     for method_key, method in local.methods_map : method_key => {
-      api_key = method.api_key
-      # Extraer nombre de función - soporta ambos formatos:
-      # - ARN Lambda: arn:aws:lambda:region:account:function:name
-      # - URI integración: arn:aws:apigateway:region:lambda:path/.../functions/arn:aws:lambda:.../invocations
-      lambda_name = can(regex("function:([^:/]+)", method.lambda_arn)) ? regex("function:([^:/]+)", method.lambda_arn)[0] : ""
-      lambda_arn = can(regex("^arn:aws:apigateway:", method.lambda_arn)) ? (
-        # Extraer ARN de Lambda del URI de integración
-        regex("functions/(arn:aws:lambda:[^/]+)/invocations", method.lambda_arn)[0]
-      ) : method.lambda_arn
+      api_key    = method.api_key
+      lambda_arn = method.lambda_arn
     } if method.integration_type == "LAMBDA" && method.lambda_arn != ""
   }
 
