@@ -153,6 +153,36 @@ output "resource_ids" {
 }
 
 # ========================================================================
+# CLOUDWATCH LOG GROUPS
+# ========================================================================
+output "log_group_arns" {
+  description = "Mapa de ARNs de los Log Groups creados para Access Logs"
+  value = {
+    for key, log_group in aws_cloudwatch_log_group.api_gateway : key => log_group.arn
+  }
+}
+
+output "log_group_names" {
+  description = "Mapa de nombres de los Log Groups creados"
+  value = {
+    for key, log_group in aws_cloudwatch_log_group.api_gateway : key => log_group.name
+  }
+}
+
+# ========================================================================
+# WAF ASSOCIATIONS
+# ========================================================================
+output "waf_associations" {
+  description = "Mapa de asociaciones WAF Web ACL"
+  value = {
+    for key, assoc in aws_wafv2_web_acl_association.this : key => {
+      resource_arn = assoc.resource_arn
+      web_acl_arn  = assoc.web_acl_arn
+    }
+  }
+}
+
+# ========================================================================
 # OUTPUT CONSOLIDADO
 # ========================================================================
 output "apis" {

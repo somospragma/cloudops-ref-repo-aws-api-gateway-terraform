@@ -50,6 +50,15 @@ locals {
       # CORS global
       cors = config.cors
 
+      # CloudWatch Logs
+      logs = config.logs
+
+      # WAF
+      waf_web_acl_arn = config.waf_web_acl_arn
+
+      # Resource Policy
+      resource_policy = config.resource_policy
+
       # VPC Link
       vpc_link = config.vpc_link
 
@@ -129,7 +138,7 @@ locals {
         http_method_integration = route.http_method
         request_parameters      = route.request_parameters
         # Calcular depth del path para lookup de recursos
-        path_depth              = length(split("/", trimprefix(route.route_path, "/"))) - 1
+        path_depth = length(split("/", trimprefix(route.route_path, "/"))) - 1
       }
     ]
   ])
@@ -251,5 +260,39 @@ locals {
   }
   path_resources_level_4 = {
     for key, res in local.path_resources : key => res if res.depth == 4
+  }
+
+  # ========================================================================
+  # 11. CLOUDWATCH LOG GROUPS
+  # ========================================================================
+  log_groups_to_create = {
+    for key, api in local.api_resources : key => {
+      name              = "API-Gateway-Execution-Logs_${aws_api_gateway_rest_api.this[key].id}/${api.stage_name}"
+      retention_in_days = api.logs.retention_in_days
+      kms_key_id        = api.logs.kms_key_id
+      tags              = api.tags
+    } if api.logs.enabled
+  }
+
+  # ========================================================================
+  # 12. RESOURCE POLICIES
+  # ========================================================================
+  # Policy por defecto (permisivo) cuando enabled=true pero no se pasa policy_document
+  default_resource_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect    = "Allow"
+        Principal = "*"
+        Action    = "execute-api:Invoke"
+        Resource  = "execute-api:/*"
+      }
+    ]
+  })
+
+  resource_policies_to_create = {
+    for key, api in local.api_resources : key => {
+      policy = api.resource_policy.policy_document != "" ? api.resource_policy.policy_document : local.default_resource_policy
+    } if api.resource_policy.enabled
   }
 }

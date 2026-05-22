@@ -191,7 +191,7 @@ resource "aws_api_gateway_integration" "this" {
     can(regex("^arn:aws:apigateway:", each.value.lambda_arn)) ? each.value.lambda_arn : (
       "arn:aws:apigateway:${var.region}:lambda:path/2015-03-31/functions/${each.value.lambda_arn}/invocations"
     )
-  ) : (
+    ) : (
     each.value.integration_type == "VPC_LINK" ? each.value.backend_url : (
       each.value.integration_type == "HTTP" ? each.value.http_url : null
     )
@@ -385,6 +385,23 @@ resource "aws_api_gateway_deployment" "this" {
 }
 
 # ========================================================================
+# CLOUDWATCH LOG GROUP (para Access Logs)
+# ========================================================================
+resource "aws_cloudwatch_log_group" "api_gateway" {
+  provider = aws.project
+  for_each = {
+    for key, api in local.api_resources : key => api
+    if api.logs.enabled
+  }
+
+  name              = "API-Gateway-Execution-Logs_${aws_api_gateway_rest_api.this[each.key].id}/${each.value.stage_name}"
+  retention_in_days = each.value.logs.retention_in_days
+  kms_key_id        = each.value.logs.kms_key_id
+
+  tags = each.value.tags
+}
+
+# ========================================================================
 # STAGE
 # ========================================================================
 resource "aws_api_gateway_stage" "this" {
@@ -397,15 +414,18 @@ resource "aws_api_gateway_stage" "this" {
 
   xray_tracing_enabled = each.value.xray_tracing_enabled
 
+  # Access Logs - usa el Log Group creado automáticamente si logs.enabled=true
   dynamic "access_log_settings" {
-    for_each = each.value.access_log_destination_arn != "" ? [1] : []
+    for_each = each.value.logs.enabled ? [1] : (each.value.access_log_destination_arn != "" ? [1] : [])
     content {
-      destination_arn = each.value.access_log_destination_arn
+      destination_arn = each.value.logs.enabled ? aws_cloudwatch_log_group.api_gateway[each.key].arn : each.value.access_log_destination_arn
       format          = each.value.access_log_format
     }
   }
 
   tags = each.value.tags
+
+  depends_on = [aws_cloudwatch_log_group.api_gateway]
 }
 
 # ========================================================================
@@ -504,4 +524,44 @@ resource "aws_api_gateway_base_path_mapping" "this" {
   stage_name  = aws_api_gateway_stage.this[each.key].stage_name
   domain_name = aws_api_gateway_domain_name.this[each.key].domain_name
   base_path   = each.value.base_path != "" ? each.value.base_path : null
+}
+
+# ========================================================================
+# WAF WEB ACL ASSOCIATION (Opcional)
+# ========================================================================
+resource "aws_wafv2_web_acl_association" "this" {
+  provider = aws.project
+  for_each = {
+    for key, api in local.api_resources : key => api
+    if api.waf_web_acl_arn != ""
+  }
+
+  resource_arn = aws_api_gateway_stage.this[each.key].arn
+  web_acl_arn  = each.value.waf_web_acl_arn
+}
+
+# ========================================================================
+# RESOURCE POLICY (Opcional)
+# ========================================================================
+resource "aws_api_gateway_rest_api_policy" "this" {
+  provider = aws.project
+  for_each = {
+    for key, api in local.api_resources : key => api
+    if api.resource_policy.enabled
+  }
+
+  rest_api_id = aws_api_gateway_rest_api.this[each.key].id
+
+  # Si no se pasa policy_document, usa el policy permisivo por defecto
+  policy = each.value.resource_policy.policy_document != "" ? each.value.resource_policy.policy_document : jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect    = "Allow"
+        Principal = "*"
+        Action    = "execute-api:Invoke"
+        Resource  = "${aws_api_gateway_rest_api.this[each.key].execution_arn}/*"
+      }
+    ]
+  })
 }

@@ -157,6 +157,22 @@ variable "api_config" {
     custom_domain_name = optional(string, "")
     certificate_arn    = optional(string, "")
     base_path          = optional(string, "")
+
+    # ========== CLOUDWATCH LOGS ==========
+    logs = optional(object({
+      enabled           = optional(bool, true)
+      retention_in_days = optional(number, 14)
+      kms_key_id        = optional(string, null) # Si null, usa cifrado por defecto (aws/logs)
+    }), { enabled = true, retention_in_days = 14, kms_key_id = null })
+
+    # ========== WAF INTEGRATION ==========
+    waf_web_acl_arn = optional(string, "") # ARN de Web ACL existente (si vacío, no asocia WAF)
+
+    # ========== RESOURCE POLICY ==========
+    resource_policy = optional(object({
+      enabled         = optional(bool, false)
+      policy_document = optional(string, "") # JSON policy personalizado (si vacío y enabled=true, usa policy permisivo por defecto)
+    }), { enabled = false, policy_document = "" })
   }))
 
   default = {}
