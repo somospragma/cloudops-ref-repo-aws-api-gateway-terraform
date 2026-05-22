@@ -295,4 +295,14 @@ locals {
       policy = api.resource_policy.policy_document != "" ? api.resource_policy.policy_document : local.default_resource_policy
     } if api.resource_policy.enabled
   }
+
+  # ========================================================================
+  # 13. CLOUDWATCH LOGS ROLE (identificador único por proyecto)
+  # ========================================================================
+  # Obtener la primera key de las APIs que tienen logs habilitados (para el nombre del rol)
+  # Esto evita conflictos entre diferentes proyectos Terraform que usen este módulo
+  first_api_with_logs = try(
+    [for k, v in local.api_resources : k if v.logs.enabled][0],
+    ""
+  )
 }

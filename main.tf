@@ -388,12 +388,14 @@ resource "aws_api_gateway_deployment" "this" {
 # API GATEWAY ACCOUNT SETTINGS (CloudWatch Logs Role)
 # Este recurso configura el rol IAM a nivel de cuenta para que API Gateway
 # pueda escribir logs en CloudWatch. Solo se crea si hay logs habilitados.
+# El nombre incluye el identificador de la primera API para evitar conflictos
+# entre diferentes proyectos Terraform que usen este módulo.
 # ========================================================================
 resource "aws_iam_role" "api_gateway_cloudwatch" {
   provider = aws.project
-  count    = length([for k, v in local.api_resources : k if v.logs.enabled]) > 0 ? 1 : 0
+  count    = local.first_api_with_logs != "" ? 1 : 0
 
-  name = "${local.governance_prefix}-role-apigateway-cloudwatch"
+  name = "${local.governance_prefix}-role-apigateway-cloudwatch-${local.first_api_with_logs}"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -409,16 +411,16 @@ resource "aws_iam_role" "api_gateway_cloudwatch" {
   })
 
   tags = {
-    Name        = "${local.governance_prefix}-role-apigateway-cloudwatch"
+    Name        = "${local.governance_prefix}-role-apigateway-cloudwatch-${local.first_api_with_logs}"
     Description = "IAM Role for API Gateway CloudWatch Logs"
   }
 }
 
 resource "aws_iam_role_policy" "api_gateway_cloudwatch" {
   provider = aws.project
-  count    = length([for k, v in local.api_resources : k if v.logs.enabled]) > 0 ? 1 : 0
+  count    = local.first_api_with_logs != "" ? 1 : 0
 
-  name = "${local.governance_prefix}-policy-apigateway-cloudwatch"
+  name = "${local.governance_prefix}-policy-apigateway-cloudwatch-${local.first_api_with_logs}"
   role = aws_iam_role.api_gateway_cloudwatch[0].id
 
   policy = jsonencode({
@@ -443,7 +445,7 @@ resource "aws_iam_role_policy" "api_gateway_cloudwatch" {
 
 resource "aws_api_gateway_account" "this" {
   provider = aws.project
-  count    = length([for k, v in local.api_resources : k if v.logs.enabled]) > 0 ? 1 : 0
+  count    = local.first_api_with_logs != "" ? 1 : 0
 
   cloudwatch_role_arn = aws_iam_role.api_gateway_cloudwatch[0].arn
 
