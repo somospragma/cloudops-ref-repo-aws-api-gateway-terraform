@@ -84,7 +84,9 @@ locals {
         authorization      = route.authorization
         authorizer_key     = route.authorizer_key
         api_key_required   = route.api_key_required
-        lambda_arn         = route.lambda_arn
+        # Resolver lambda_arn: primero intenta lambda_key en el mapa, luego usa lambda_arn directo
+        lambda_key         = route.lambda_key
+        lambda_arn         = route.lambda_key != "" ? lookup(var.lambda_arns_map, route.lambda_key, "") : route.lambda_arn
         backend_url        = route.backend_url
         vpc_link_id        = route.vpc_link_id
         mock_status_code   = route.mock_status_code
@@ -120,6 +122,7 @@ locals {
         authorization           = route.authorization
         authorizer_key          = route.authorizer_key
         api_key_required        = route.api_key_required
+        lambda_key              = route.lambda_key
         lambda_arn              = route.lambda_arn
         backend_url             = route.backend_url
         vpc_link_id             = route.vpc_link_id
@@ -203,12 +206,14 @@ locals {
   # 8. LAMBDAS QUE NECESITAN PERMISOS
   # ========================================================================
   # NOTA: Las keys del for_each deben ser estáticas (conocidas en plan time).
-  # El lambda_arn puede ser dinámico, pero la key (method_key) es estática.
+  # Usamos lambda_key (estático) para la condición del filtro.
+  # El lambda_arn se resuelve desde var.lambda_arns_map en tiempo de apply.
   lambda_permissions = {
     for method_key, method in local.methods_map : method_key => {
       api_key    = method.api_key
+      lambda_key = method.lambda_key
       lambda_arn = method.lambda_arn
-    } if method.integration_type == "LAMBDA" && method.lambda_arn != ""
+    } if method.integration_type == "LAMBDA" && (method.lambda_key != "" || method.lambda_arn != "")
   }
 
   # ========================================================================
