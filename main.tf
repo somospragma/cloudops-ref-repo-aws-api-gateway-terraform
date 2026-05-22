@@ -464,18 +464,10 @@ resource "aws_api_gateway_usage_plan_key" "this" {
 }
 
 # ========================================================================
-# LAMBDA PERMISSIONS
+# NOTA: Los permisos Lambda se gestionan con el módulo separado
+# cloudops-ref-repo-aws-lambda-permission-terraform
+# Esto evita el error "for_each map includes keys derived from resource attributes"
 # ========================================================================
-resource "aws_lambda_permission" "this" {
-  provider = aws.project
-  for_each = local.lambda_permissions
-
-  statement_id  = "AllowAPIGatewayInvoke-${replace(each.key, ":", "-")}"
-  action        = "lambda:InvokeFunction"
-  function_name = each.value.lambda_arn
-  principal     = "apigateway.amazonaws.com"
-  source_arn    = "${aws_api_gateway_rest_api.this[each.value.api_key].execution_arn}/*/*"
-}
 
 # ========================================================================
 # CUSTOM DOMAIN NAME (Opcional)

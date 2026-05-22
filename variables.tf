@@ -39,26 +39,6 @@ variable "region" {
 }
 
 ############################################################################
-# Variable para ARNs de Lambda (separada para evitar for_each unknown keys)
-############################################################################
-
-variable "lambda_arns_map" {
-  description = <<-EOT
-    Mapa de lambda_key -> lambda_arn para resolver ARNs de Lambda.
-    Esta variable se pasa separada de api_config para evitar el error
-    "for_each map includes keys derived from resource attributes".
-    
-    Ejemplo:
-    lambda_arns_map = {
-      "hub-sync"    = "arn:aws:lambda:us-east-1:123456789:function:my-sync-function"
-      "hub-webhook" = "arn:aws:lambda:us-east-1:123456789:function:my-webhook-function"
-    }
-  EOT
-  type        = map(string)
-  default     = {}
-}
-
-############################################################################
 # Variable de Configuración Principal - API Gateway (PC-IAC-002, PC-IAC-010)
 ############################################################################
 
@@ -123,9 +103,10 @@ variable "api_config" {
       authorizer_key   = optional(string, "")     # Key del authorizer en authorizers map
       api_key_required = optional(bool, false)
 
-      # Para LAMBDA - usar lambda_key para lookup en lambda_arns_map
-      lambda_key = optional(string, "") # Key para buscar en var.lambda_arns_map
-      lambda_arn = optional(string, "") # ARN directo (alternativa, solo si es estático)
+      # Para LAMBDA - ARN de la función Lambda
+      # NOTA: Los permisos Lambda se gestionan con el módulo separado
+      # cloudops-ref-repo-aws-lambda-permission-terraform
+      lambda_arn = optional(string, "") # ARN de la función Lambda
 
       # Para VPC_LINK
       backend_url = optional(string, "")

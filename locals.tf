@@ -84,9 +84,7 @@ locals {
         authorization      = route.authorization
         authorizer_key     = route.authorizer_key
         api_key_required   = route.api_key_required
-        # Resolver lambda_arn: primero intenta lambda_key en el mapa, luego usa lambda_arn directo
-        lambda_key         = route.lambda_key
-        lambda_arn         = route.lambda_key != "" ? lookup(var.lambda_arns_map, route.lambda_key, "") : route.lambda_arn
+        lambda_arn         = route.lambda_arn
         backend_url        = route.backend_url
         vpc_link_id        = route.vpc_link_id
         mock_status_code   = route.mock_status_code
@@ -122,7 +120,6 @@ locals {
         authorization           = route.authorization
         authorizer_key          = route.authorizer_key
         api_key_required        = route.api_key_required
-        lambda_key              = route.lambda_key
         lambda_arn              = route.lambda_arn
         backend_url             = route.backend_url
         vpc_link_id             = route.vpc_link_id
@@ -203,21 +200,7 @@ locals {
   }
 
   # ========================================================================
-  # 8. LAMBDAS QUE NECESITAN PERMISOS
-  # ========================================================================
-  # NOTA: Las keys del for_each deben ser estáticas (conocidas en plan time).
-  # Usamos lambda_key (estático) para la condición del filtro.
-  # El lambda_arn se resuelve desde var.lambda_arns_map en tiempo de apply.
-  lambda_permissions = {
-    for method_key, method in local.methods_map : method_key => {
-      api_key    = method.api_key
-      lambda_key = method.lambda_key
-      lambda_arn = method.lambda_arn
-    } if method.integration_type == "LAMBDA" && (method.lambda_key != "" || method.lambda_arn != "")
-  }
-
-  # ========================================================================
-  # 9. CORS OPTIONS METHODS (para rutas con CORS habilitado)
+  # 8. CORS OPTIONS METHODS (para rutas con CORS habilitado)
   # ========================================================================
   cors_options_methods = {
     for route_key, route in local.routes_map : route_key => route
@@ -225,7 +208,7 @@ locals {
   }
 
   # ========================================================================
-  # 10. RECURSOS DE PATH (extraer paths únicos)
+  # 9. RECURSOS DE PATH (extraer paths únicos)
   # ========================================================================
   # Extraer todos los segmentos de path necesarios
   path_segments = flatten([
@@ -252,7 +235,7 @@ locals {
   }
 
   # ========================================================================
-  # 11. SEPARAR PATHS POR NIVEL DE PROFUNDIDAD (5 niveles)
+  # 10. SEPARAR PATHS POR NIVEL DE PROFUNDIDAD (5 niveles)
   # ========================================================================
   path_resources_level_0 = {
     for key, res in local.path_resources : key => res if res.depth == 0
