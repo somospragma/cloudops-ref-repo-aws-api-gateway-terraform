@@ -385,6 +385,72 @@ resource "aws_api_gateway_deployment" "this" {
 }
 
 # ========================================================================
+# API GATEWAY ACCOUNT SETTINGS (CloudWatch Logs Role)
+# Este recurso configura el rol IAM a nivel de cuenta para que API Gateway
+# pueda escribir logs en CloudWatch. Solo se crea si hay logs habilitados.
+# ========================================================================
+resource "aws_iam_role" "api_gateway_cloudwatch" {
+  provider = aws.project
+  count    = length([for k, v in local.api_resources : k if v.logs.enabled]) > 0 ? 1 : 0
+
+  name = "${local.governance_prefix}-role-apigateway-cloudwatch"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "apigateway.amazonaws.com"
+        }
+      }
+    ]
+  })
+
+  tags = {
+    Name        = "${local.governance_prefix}-role-apigateway-cloudwatch"
+    Description = "IAM Role for API Gateway CloudWatch Logs"
+  }
+}
+
+resource "aws_iam_role_policy" "api_gateway_cloudwatch" {
+  provider = aws.project
+  count    = length([for k, v in local.api_resources : k if v.logs.enabled]) > 0 ? 1 : 0
+
+  name = "${local.governance_prefix}-policy-apigateway-cloudwatch"
+  role = aws_iam_role.api_gateway_cloudwatch[0].id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:DescribeLogGroups",
+          "logs:DescribeLogStreams",
+          "logs:PutLogEvents",
+          "logs:GetLogEvents",
+          "logs:FilterLogEvents"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+resource "aws_api_gateway_account" "this" {
+  provider = aws.project
+  count    = length([for k, v in local.api_resources : k if v.logs.enabled]) > 0 ? 1 : 0
+
+  cloudwatch_role_arn = aws_iam_role.api_gateway_cloudwatch[0].arn
+
+  depends_on = [aws_iam_role_policy.api_gateway_cloudwatch]
+}
+
+# ========================================================================
 # CLOUDWATCH LOG GROUP (para Access Logs)
 # ========================================================================
 resource "aws_cloudwatch_log_group" "api_gateway" {
@@ -425,7 +491,10 @@ resource "aws_api_gateway_stage" "this" {
 
   tags = each.value.tags
 
-  depends_on = [aws_cloudwatch_log_group.api_gateway]
+  depends_on = [
+    aws_cloudwatch_log_group.api_gateway,
+    aws_api_gateway_account.this
+  ]
 }
 
 # ========================================================================
