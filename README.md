@@ -9,9 +9,13 @@ Módulo de Terraform para crear API Gateway REST APIs usando recursos nativos de
 - ✅ **Integraciones**: LAMBDA, VPC_LINK, MOCK, HTTP
 - ✅ **Autenticación**: NONE, COGNITO_USER_POOLS, CUSTOM (Lambda Authorizer), AWS_IAM
 - ✅ **API Keys y Usage Plans**: Configuración completa de throttling y quotas
-- ✅ **CORS**: Configurable por ruta
+- ✅ **CORS**: Configurable global y por ruta
 - ✅ **Custom Domain**: Con certificados ACM
 - ✅ **VPC Link**: Crear nuevo o usar existente
+- ✅ **CloudWatch Access Logs**: Con retención configurable y KMS opcional
+- ✅ **WAF Integration**: Asociación con Web ACL existente
+- ✅ **Resource Policy**: Políticas de acceso configurables
+- ✅ **5 Niveles de Profundidad**: Soporta paths hasta `/a/b/c/d/e`
 - ✅ **Cumple PC-IAC**: Reglas 001-020 de Pragma CloudOps
 
 ## Uso Básico
@@ -29,6 +33,7 @@ module "api" {
   client      = "pragma"
   project     = "sopp"
   environment = "dev"
+  region      = "us-east-1"
 
   api_config = {
     hub = {
@@ -112,6 +117,95 @@ api_config = {
 }
 ```
 
+### CloudWatch Access Logs
+
+```hcl
+api_config = {
+  hub = {
+    stage_name = "v1"
+    
+    # Logs habilitados por defecto
+    logs = {
+      enabled           = true
+      retention_in_days = 30      # Retención de logs
+      kms_key_id        = null    # null = usa cifrado por defecto (aws/logs)
+      # kms_key_id      = "arn:aws:kms:us-east-1:123456789012:key/xxx"  # KMS personalizado
+    }
+    
+    routes = {
+      "/health" = {
+        methods          = ["GET"]
+        integration_type = "LAMBDA"
+        lambda_arn       = "arn:aws:lambda:...:function:health"
+      }
+    }
+  }
+}
+```
+
+> **Nota**: El módulo crea automáticamente el IAM Role necesario para que API Gateway pueda escribir en CloudWatch Logs (`aws_api_gateway_account`).
+
+### WAF Integration
+
+```hcl
+api_config = {
+  hub = {
+    stage_name = "v1"
+    
+    # Asociar Web ACL existente (creada con módulo WAF separado)
+    waf_web_acl_arn = "arn:aws:wafv2:us-east-1:123456789012:regional/webacl/my-web-acl/xxx"
+    
+    routes = {
+      "/api" = {
+        methods          = ["GET", "POST"]
+        integration_type = "LAMBDA"
+        lambda_arn       = "arn:aws:lambda:...:function:api"
+      }
+    }
+  }
+}
+```
+
+### Resource Policy
+
+```hcl
+api_config = {
+  hub = {
+    stage_name = "v1"
+    
+    # Habilitar Resource Policy
+    resource_policy = {
+      enabled = true
+      # Si policy_document está vacío, usa policy permisivo por defecto
+      policy_document = ""
+    }
+    
+    # O con policy personalizado (restringir por IP)
+    resource_policy = {
+      enabled = true
+      policy_document = jsonencode({
+        Version = "2012-10-17"
+        Statement = [
+          {
+            Effect    = "Allow"
+            Principal = "*"
+            Action    = "execute-api:Invoke"
+            Resource  = "execute-api:/*"
+            Condition = {
+              IpAddress = {
+                "aws:SourceIp" = ["10.0.0.0/8", "192.168.1.0/24"]
+              }
+            }
+          }
+        ]
+      })
+    }
+    
+    routes = { ... }
+  }
+}
+```
+
 ### VPC Link
 
 ```hcl
@@ -145,6 +239,9 @@ api_config = {
     cors = {
       enabled         = true
       allowed_origins = ["https://example.com"]
+      allowed_methods = ["GET", "POST", "OPTIONS"]
+      allowed_headers = ["Content-Type", "Authorization", "X-Api-Key"]
+      max_age         = 86400
     }
     
     routes = {
@@ -188,6 +285,33 @@ api_config = {
 }
 ```
 
+### Paths con Múltiples Niveles (hasta 5)
+
+```hcl
+api_config = {
+  hub = {
+    stage_name = "v1"
+    
+    routes = {
+      # Nivel 0
+      "/users" = { ... }
+      
+      # Nivel 1
+      "/users/{userId}" = { ... }
+      
+      # Nivel 2
+      "/users/{userId}/orders" = { ... }
+      
+      # Nivel 3
+      "/users/{userId}/orders/{orderId}" = { ... }
+      
+      # Nivel 4
+      "/users/{userId}/orders/{orderId}/items" = { ... }
+    }
+  }
+}
+```
+
 ## Variables
 
 ### Gobernanza (Obligatorias)
@@ -197,6 +321,7 @@ api_config = {
 | `client` | Nombre del cliente (máx 10 chars) | string |
 | `project` | Nombre del proyecto (máx 15 chars) | string |
 | `environment` | Ambiente: dev, qa, stg, pdn, prod | string |
+| `region` | Región AWS | string |
 
 ### api_config
 
@@ -205,12 +330,31 @@ api_config = {
 | `description` | Descripción de la API | string | "API Gateway REST API" |
 | `endpoint_type` | REGIONAL, EDGE, PRIVATE | string | "REGIONAL" |
 | `stage_name` | Nombre del stage | string | "v1" |
+| `xray_tracing_enabled` | Habilitar X-Ray | bool | false |
 | `authorizers` | Mapa de authorizers (Cognito/Lambda) | map | {} |
 | `routes` | Mapa de rutas con configuración | map | (requerido) |
 | `api_keys` | Mapa de API Keys | map | {} |
 | `cors` | Configuración CORS global | object | { enabled = false } |
 | `custom_domain_name` | Dominio personalizado | string | "" |
 | `certificate_arn` | ARN del certificado ACM | string | "" |
+| `logs` | Configuración de CloudWatch Logs | object | { enabled = true, retention_in_days = 14 } |
+| `waf_web_acl_arn` | ARN de Web ACL WAF existente | string | "" |
+| `resource_policy` | Configuración de Resource Policy | object | { enabled = false } |
+
+### logs
+
+| Atributo | Descripción | Tipo | Default |
+|----------|-------------|------|---------|
+| `enabled` | Habilitar Access Logs | bool | true |
+| `retention_in_days` | Días de retención | number | 14 |
+| `kms_key_id` | ARN de KMS (null = aws/logs) | string | null |
+
+### resource_policy
+
+| Atributo | Descripción | Tipo | Default |
+|----------|-------------|------|---------|
+| `enabled` | Habilitar Resource Policy | bool | false |
+| `policy_document` | JSON policy (vacío = permisivo) | string | "" |
 
 ### routes (por ruta)
 
@@ -238,7 +382,16 @@ api_config = {
 | `api_key_values` | Valores de las API Keys (sensitive) |
 | `usage_plan_ids` | IDs de los Usage Plans |
 | `authorizer_ids` | IDs de los Authorizers |
+| `log_group_arns` | ARNs de los Log Groups |
+| `log_group_names` | Nombres de los Log Groups |
+| `waf_associations` | Asociaciones WAF |
 | `apis` | Mapa consolidado |
+
+## Permisos Lambda
+
+> **Importante**: Los permisos para que API Gateway invoque Lambda se gestionan con el módulo separado [`cloudops-ref-repo-aws-lambda-permission-terraform`](https://github.com/somospragma/cloudops-ref-repo-aws-lambda-permission-terraform).
+>
+> Esto evita el error de Terraform: `for_each map includes keys derived from resource attributes that cannot be determined until apply`.
 
 ## Diferencia con OpenAPI
 
@@ -248,6 +401,43 @@ api_config = {
 | Flexibilidad por ruta | Limitada | Total |
 | Debugging | Difícil | Fácil (recursos individuales) |
 | State management | Un solo recurso | Recursos granulares |
+| Paths profundos | Limitado | ✅ Hasta 5 niveles |
+
+## Arquitectura
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        API Gateway                               │
+├─────────────────────────────────────────────────────────────────┤
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐  │
+│  │   WAF       │  │  Resource   │  │    CloudWatch Logs      │  │
+│  │  Web ACL    │  │   Policy    │  │  (Access Logs + KMS)    │  │
+│  └─────────────┘  └─────────────┘  └─────────────────────────┘  │
+├─────────────────────────────────────────────────────────────────┤
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │                    REST API                              │    │
+│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐      │    │
+│  │  │ Authorizers │  │   Routes    │  │  API Keys   │      │    │
+│  │  │ (Cognito/   │  │ (5 levels)  │  │ + Usage     │      │    │
+│  │  │  Lambda)    │  │             │  │   Plans     │      │    │
+│  │  └─────────────┘  └─────────────┘  └─────────────┘      │    │
+│  └─────────────────────────────────────────────────────────┘    │
+├─────────────────────────────────────────────────────────────────┤
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐  │
+│  │   Stage     │  │ Deployment  │  │    Custom Domain        │  │
+│  │   (v1)      │  │             │  │  + Base Path Mapping    │  │
+│  └─────────────┘  └─────────────┘  └─────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+              ┌───────────────────────────────┐
+              │         Integrations          │
+              │  ┌───────┐ ┌───────┐ ┌─────┐  │
+              │  │Lambda │ │VPC    │ │Mock │  │
+              │  │       │ │Link   │ │     │  │
+              │  └───────┘ └───────┘ └─────┘  │
+              └───────────────────────────────┘
+```
 
 ## Cumplimiento PC-IAC
 
