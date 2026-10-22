@@ -150,7 +150,13 @@ resource "aws_api_gateway_method" "this" {
   ) : null
   api_key_required = each.value.api_key_required
 
-  request_parameters = length(each.value.request_parameters) > 0 ? each.value.request_parameters : null
+  # Para rutas greedy ({proxy+}) se agrega automáticamente el path param del
+  # proxy, necesario para reenviar el sub-path al backend. Se combina con los
+  # request_parameters que el consumidor haya definido.
+  request_parameters = merge(
+    length(each.value.request_parameters) > 0 ? each.value.request_parameters : {},
+    strcontains(each.value.route_path, "{proxy+}") ? { "method.request.path.proxy" = true } : {}
+  )
 
   depends_on = [
     aws_api_gateway_resource.level_0,
@@ -187,18 +193,31 @@ resource "aws_api_gateway_integration" "this" {
   integration_http_method = each.value.integration_type == "LAMBDA" ? "POST" : (
     each.value.integration_type == "MOCK" ? null : each.value.http_method_integration
   )
+  # Proxy passthrough: si la ruta es greedy ({proxy+}), reenvía el sub-path al
+  # backend agregando /{proxy} al uri. Aplica a VPC_LINK y HTTP.
   uri = each.value.integration_type == "LAMBDA" ? (
     can(regex("^arn:aws:apigateway:", each.value.lambda_arn)) ? each.value.lambda_arn : (
       "arn:aws:apigateway:${var.region}:lambda:path/2015-03-31/functions/${each.value.lambda_arn}/invocations"
     )
     ) : (
-    each.value.integration_type == "VPC_LINK" ? each.value.backend_url : (
-      each.value.integration_type == "HTTP" ? each.value.http_url : null
+    each.value.integration_type == "VPC_LINK" ? (
+      strcontains(each.value.route_path, "{proxy+}") ? "${each.value.backend_url}/{proxy}" : each.value.backend_url
+      ) : (
+      each.value.integration_type == "HTTP" ? (
+        strcontains(each.value.route_path, "{proxy+}") ? "${each.value.http_url}/{proxy}" : each.value.http_url
+      ) : null
     )
   )
 
   connection_type = each.value.integration_type == "VPC_LINK" ? "VPC_LINK" : null
   connection_id   = each.value.integration_type == "VPC_LINK" ? each.value.vpc_link_id : null
+
+  # Proxy passthrough: mapea el path capturado por {proxy+} hacia el backend.
+  request_parameters = (
+    contains(["VPC_LINK", "HTTP"], each.value.integration_type) && strcontains(each.value.route_path, "{proxy+}")
+    ? { "integration.request.path.proxy" = "method.request.path.proxy" }
+    : null
+  )
 
   request_templates = each.value.integration_type == "MOCK" ? {
     "application/json" = "{\"statusCode\": ${each.value.mock_status_code}}"
