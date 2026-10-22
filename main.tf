@@ -379,6 +379,10 @@ resource "aws_api_gateway_deployment" "this" {
 
   rest_api_id = aws_api_gateway_rest_api.this[each.key].id
 
+  # El hash incluye los ATRIBUTOS (no solo .id) de método e integración, para
+  # que un cambio de uri, request_parameters, http_method, type o connection
+  # dispare un nuevo deployment. Con solo .id, modificar atributos (ej. el
+  # proxy passthrough) no redesplegaba el stage y servía la versión vieja.
   triggers = {
     redeployment = sha1(jsonencode([
       [for k, v in aws_api_gateway_resource.level_0 : v.id if startswith(k, "${each.key}:")],
@@ -386,8 +390,8 @@ resource "aws_api_gateway_deployment" "this" {
       [for k, v in aws_api_gateway_resource.level_2 : v.id if startswith(k, "${each.key}:")],
       [for k, v in aws_api_gateway_resource.level_3 : v.id if startswith(k, "${each.key}:")],
       [for k, v in aws_api_gateway_resource.level_4 : v.id if startswith(k, "${each.key}:")],
-      [for k, v in aws_api_gateway_method.this : v.id if startswith(k, "${each.key}:")],
-      [for k, v in aws_api_gateway_integration.this : v.id if startswith(k, "${each.key}:")],
+      [for k, v in aws_api_gateway_method.this : "${v.id}-${jsonencode(v.request_parameters)}" if startswith(k, "${each.key}:")],
+      [for k, v in aws_api_gateway_integration.this : "${v.id}-${v.uri}-${v.type}-${coalesce(v.connection_id, "none")}-${jsonencode(v.request_parameters)}" if startswith(k, "${each.key}:")],
       [for k, v in aws_api_gateway_authorizer.this : v.id if startswith(k, "${each.key}:")],
     ]))
   }
